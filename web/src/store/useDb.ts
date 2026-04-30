@@ -14,9 +14,13 @@ import {
   getDeviceId,
   makeContactsRepo,
   makeCustomFieldDefsRepo,
+  makeInteractionsRepo,
+  makeContactTasksRepo,
   type DbAdapter,
   type ContactsRepo,
   type CustomFieldDefsRepo,
+  type InteractionsRepo,
+  type ContactTasksRepo,
 } from '@smart-contacts/shared'
 
 export interface UseDbResult {
@@ -24,6 +28,8 @@ export interface UseDbResult {
   deviceId: string | null
   contactsRepo: ContactsRepo | null
   defsRepo: CustomFieldDefsRepo | null
+  interactionsRepo: InteractionsRepo | null
+  tasksRepo: ContactTasksRepo | null
 }
 
 export function useDb(): UseDbResult {
@@ -32,6 +38,8 @@ export function useDb(): UseDbResult {
     deviceId: null,
     contactsRepo: null,
     defsRepo: null,
+    interactionsRepo: null,
+    tasksRepo: null,
   })
   const adapterRef = useRef<DbAdapter | null>(null)
   useEffect(() => {
@@ -49,6 +57,8 @@ export function useDb(): UseDbResult {
         deviceId: did,
         contactsRepo: makeContactsRepo(adapter, did),
         defsRepo: makeCustomFieldDefsRepo(adapter, did),
+        interactionsRepo: makeInteractionsRepo(adapter, did),
+        tasksRepo: makeContactTasksRepo(adapter, did),
       })
     })()
     return () => {

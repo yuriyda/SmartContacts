@@ -24,7 +24,14 @@ export const en = {
     },
   },
   network: {
-    placeholder: 'Network dashboard — coming in next update',
+    today: 'Today',
+    stale: 'Stale',
+    weakening: 'Weakening',
+    empty: {
+      today: 'No reminders, birthdays, or tasks today.',
+      stale: 'All contacts are up-to-date.',
+      weakening: 'No weakening relationships detected.',
+    },
   },
   sidebar: {
     filters: 'Filters',

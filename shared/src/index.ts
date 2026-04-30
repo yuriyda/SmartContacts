@@ -25,6 +25,15 @@ export * from './db/backup'
 export * from './db/lookupGc'
 export * from './core/demo'
 export { relationshipScore, countFilledFields, type ScoreInput } from './core/relationshipScore'
+export {
+  computeTodayItems,
+  computeStaleItems,
+  computeWeakeningItems,
+  DEFAULT_STALE_THRESHOLDS,
+  type TodayItem,
+  type StaleItem,
+  type WeakeningItem,
+} from './core/networkWidgets'
 export * from './parse/quickEntryContacts'
 export * from './sync/sync'
 export * from './sync/syncEngine'

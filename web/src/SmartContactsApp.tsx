@@ -20,6 +20,7 @@ import {
 import { AppProvider, useApp } from './ui/AppContext'
 import { useDb } from './store/useDb'
 import { useContacts } from './store/useContacts'
+import { useNetworkData } from './store/useNetworkData'
 import { Sidebar } from './ui/Sidebar'
 import { MainList } from './ui/MainList'
 import { StatusBar } from './ui/StatusBar'
@@ -42,7 +43,7 @@ import {
   isFilterNonTrivial,
   type SavedFilter,
 } from './ui/savedFilters'
-import { NetworkDashboardPlaceholder } from './ui/network/NetworkDashboardPlaceholder'
+import { NetworkDashboard } from './ui/network/NetworkDashboard'
 
 export function SmartContactsApp() {
   const dbState = useDb()
@@ -156,6 +157,12 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     [saveMeta],
   )
 
+  const { recentInteractions, openTasks } = useNetworkData(
+    dbState.interactionsRepo,
+    dbState.tasksRepo,
+    activeView === 'network',
+  )
+
   // ---------------------------------------------------------------------------
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -181,6 +188,15 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     [],
   )
   const resetFilters = useCallback(() => setFilters(DEFAULT_FILTERS), [])
+
+  // Network dashboard: clicking a widget row navigates to the contact in Contacts view
+  const onOpenContact = useCallback(
+    (id: string) => {
+      setSelectedId(id)
+      void saveMeta('active_view_v1', 'contacts')
+    },
+    [saveMeta],
+  )
 
   // Saved filter presets — derived from metaSettings so they update reactively.
   const savedFilters = useMemo(() => loadSavedFilters(metaSettings), [metaSettings])
@@ -606,7 +622,12 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
             />
           </>
         ) : (
-          <NetworkDashboardPlaceholder />
+          <NetworkDashboard
+            contacts={filtered}
+            recentInteractions={recentInteractions}
+            openTasks={openTasks}
+            onOpenContact={onOpenContact}
+          />
         )}
       </div>
 
