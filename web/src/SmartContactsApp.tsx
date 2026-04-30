@@ -42,6 +42,7 @@ import {
   isFilterNonTrivial,
   type SavedFilter,
 } from './ui/savedFilters'
+import { NetworkDashboardPlaceholder } from './ui/network/NetworkDashboardPlaceholder'
 
 export function SmartContactsApp() {
   const dbState = useDb()
@@ -142,6 +143,18 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     setSidebarWidth(SIDEBAR_DEFAULT)
     setDetailWidth(DETAIL_DEFAULT)
   }, [saveMeta])
+
+  // Active top-bar view — persisted in meta so it survives page reload.
+  const activeView = useMemo<'contacts' | 'network'>(
+    () => (metaSettings.active_view_v1 === 'network' ? 'network' : 'contacts'),
+    [metaSettings.active_view_v1],
+  )
+  const onChangeView = useCallback(
+    (v: 'contacts' | 'network') => {
+      void saveMeta('active_view_v1', v)
+    },
+    [saveMeta],
+  )
 
   // ---------------------------------------------------------------------------
 
@@ -528,6 +541,8 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}
         searchFocusRef={searchInputRef}
+        activeView={activeView}
+        onChangeView={onChangeView}
       />
 
       <div className="flex-1 flex min-h-0">
@@ -557,36 +572,42 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
             />
           </>
         )}
-        <MainList
-          contacts={filtered}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onTouch={(id) => void touch(id)}
-          onSoftDelete={(id) => void handleSoftDelete(id)}
-          onOpenEdit={handleOpenEdit}
-          loading={loading}
-        />
-        <ResizeHandle
-          edge="right"
-          width={detailWidth}
-          min={240}
-          max={640}
-          onResize={setDetailWidth}
-          onCommit={(finalWidth) => persistWidths(sidebarWidth, finalWidth)}
-        />
-        <ContactDetail
-          contact={selected}
-          defs={defs}
-          allContacts={contacts}
-          onEdit={handleEdit}
-          onToggleProtect={onToggleProtect}
-          onToggleHide={onToggleHide}
-          onTouch={() => selectedId && void touch(selectedId)}
-          onDelete={() => selectedId && void handleSoftDelete(selectedId)}
-          onRestore={() => selectedId && void restore(selectedId)}
-          onSelectContact={setSelectedId}
-          width={detailWidth}
-        />
+        {activeView === 'contacts' ? (
+          <>
+            <MainList
+              contacts={filtered}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onTouch={(id) => void touch(id)}
+              onSoftDelete={(id) => void handleSoftDelete(id)}
+              onOpenEdit={handleOpenEdit}
+              loading={loading}
+            />
+            <ResizeHandle
+              edge="right"
+              width={detailWidth}
+              min={240}
+              max={640}
+              onResize={setDetailWidth}
+              onCommit={(finalWidth) => persistWidths(sidebarWidth, finalWidth)}
+            />
+            <ContactDetail
+              contact={selected}
+              defs={defs}
+              allContacts={contacts}
+              onEdit={handleEdit}
+              onToggleProtect={onToggleProtect}
+              onToggleHide={onToggleHide}
+              onTouch={() => selectedId && void touch(selectedId)}
+              onDelete={() => selectedId && void handleSoftDelete(selectedId)}
+              onRestore={() => selectedId && void restore(selectedId)}
+              onSelectContact={setSelectedId}
+              width={detailWidth}
+            />
+          </>
+        ) : (
+          <NetworkDashboardPlaceholder />
+        )}
       </div>
 
       <StatusBar

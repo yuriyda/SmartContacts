@@ -18,6 +18,13 @@ export const en = {
     search_placeholder: 'Search…',
     settings: 'Settings',
     toggle_sidebar: 'Toggle sidebar',
+    tab: {
+      contacts: 'Contacts',
+      network: 'Network',
+    },
+  },
+  network: {
+    placeholder: 'Network dashboard — coming in next update',
   },
   sidebar: {
     filters: 'Filters',

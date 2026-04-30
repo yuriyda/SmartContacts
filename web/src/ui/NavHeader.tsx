@@ -1,10 +1,11 @@
 /**
  * @file NavHeader.tsx
- * Top navigation bar: burger (sidebar toggle) + app title + search input +
+ * Top navigation bar: burger (sidebar toggle) + Contacts/Network view tabs + search input +
  * QuickEntry inline chip input + Settings cog.
  * Rules: no DB access; receives all handlers as props. The searchFocusRef is forwarded
  * from the parent so the `/` hotkey can programmatically focus the search input.
  * QuickEntry builds its own QuickEntryContext from the contacts list passed as prop.
+ * activeView / onChangeView are wired to metaSettings.active_view_v1 in SmartContactsApp.
  */
 import type { RefObject } from 'react'
 import { useApp } from './AppContext'
@@ -24,6 +25,9 @@ interface NavHeaderProps {
   onToggleSidebar: () => void
   // Forwarded ref bound to the search input for the `/` hotkey
   searchFocusRef?: RefObject<HTMLInputElement>
+  // Top-bar view switcher (persisted in metaSettings.active_view_v1)
+  activeView: 'contacts' | 'network'
+  onChangeView: (v: 'contacts' | 'network') => void
 }
 
 export function NavHeader({
@@ -36,6 +40,8 @@ export function NavHeader({
   sidebarOpen: _sidebarOpen,
   onToggleSidebar,
   searchFocusRef,
+  activeView,
+  onChangeView,
 }: NavHeaderProps) {
   const { t, TC } = useApp()
   const lookups = deriveLookups(contacts)
@@ -58,7 +64,21 @@ export function NavHeader({
         ☰
       </button>
       <Logo size={26} />
-      <h1 className={`text-lg font-semibold ${TC.text}`}>{t('app.title')}</h1>
+      <div className="flex items-center gap-1">
+        {(['contacts', 'network'] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => onChangeView(v)}
+            className={[
+              'px-3 py-1 rounded text-sm font-medium transition-colors',
+              activeView === v ? 'bg-sky-600/20 text-sky-300' : `${TC.textSec} hover:${TC.text}`,
+            ].join(' ')}
+          >
+            {t(`nav.tab.${v}`)}
+          </button>
+        ))}
+      </div>
       <div className="flex-1 flex items-center gap-2 max-w-xl">
         <Search size={14} className={TC.textMuted} />
         <input

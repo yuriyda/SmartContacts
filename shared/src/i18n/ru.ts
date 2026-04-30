@@ -20,6 +20,13 @@ export const ru: Dict = {
     search_placeholder: 'Поиск…',
     settings: 'Настройки',
     toggle_sidebar: 'Сайдбар',
+    tab: {
+      contacts: 'Контакты',
+      network: 'Нетворк',
+    },
+  },
+  network: {
+    placeholder: 'Дашборд «Нетворк» — будет в следующем обновлении',
   },
   sidebar: {
     filters: 'Фильтры',
