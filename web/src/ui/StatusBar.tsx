@@ -15,6 +15,8 @@ interface StatusBarProps {
   onThemeToggle: () => void
   onModeToggle: () => void
   onDensityToggle: () => void
+  filterIsNonTrivial: boolean
+  onSaveFilter: () => void
 }
 
 export function StatusBar({
@@ -24,6 +26,8 @@ export function StatusBar({
   onThemeToggle,
   onModeToggle,
   onDensityToggle,
+  filterIsNonTrivial,
+  onSaveFilter,
 }: StatusBarProps) {
   const { TC, t, locale, theme, mode, density, db } = useApp()
 
@@ -50,6 +54,17 @@ export function StatusBar({
           <span className={TC.textSec}>{countLabel}</span>
         )}
       </div>
+
+      {/* Save filter button — shown only when current filter is non-trivial */}
+      {filterIsNonTrivial && (
+        <button
+          type="button"
+          onClick={onSaveFilter}
+          className={`px-2 py-0.5 rounded ${TC.textSec} hover:${TC.text} hover:bg-sky-600/20`}
+        >
+          {t('actions.save_filter')}
+        </button>
+      )}
 
       {/* Centre — sync placeholder */}
       <div className={`flex-1 text-center ${TC.textMuted}`}>{t('status.sync_pending')}</div>

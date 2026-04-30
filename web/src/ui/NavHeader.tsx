@@ -1,17 +1,23 @@
 /**
  * @file NavHeader.tsx
- * Top navigation bar: burger (sidebar toggle) + app title + search input + Add button + Settings cog.
+ * Top navigation bar: burger (sidebar toggle) + app title + search input +
+ * QuickEntry inline chip input + Settings cog.
  * Rules: no DB access; receives all handlers as props. The searchFocusRef is forwarded
  * from the parent so the `/` hotkey can programmatically focus the search input.
+ * QuickEntry builds its own QuickEntryContext from the contacts list passed as prop.
  */
 import type { RefObject } from 'react'
 import { useApp } from './AppContext'
 import { Search, Settings as SettingsIcon } from './icons'
+import { QuickEntry } from './QuickEntry'
+import { deriveLookups, type Contact, type ParsedQuickEntry } from '@smart-contacts/shared'
 
 interface NavHeaderProps {
+  contacts: Contact[]
   search: string
   onSearchChange: (v: string) => void
-  onAdd: () => void
+  onQuickAdd: (parsed: ParsedQuickEntry) => void
+  onOpenFullDialog: (parsed: ParsedQuickEntry) => void
   onOpenSettings: () => void
   sidebarOpen: boolean
   onToggleSidebar: () => void
@@ -20,15 +26,25 @@ interface NavHeaderProps {
 }
 
 export function NavHeader({
+  contacts,
   search,
   onSearchChange,
-  onAdd,
+  onQuickAdd,
+  onOpenFullDialog,
   onOpenSettings,
   sidebarOpen: _sidebarOpen,
   onToggleSidebar,
   searchFocusRef,
 }: NavHeaderProps) {
   const { t, TC } = useApp()
+  const lookups = deriveLookups(contacts)
+  const ctx = {
+    tags: lookups.tags.map((tt) => tt.name),
+    groups: lookups.groups.map((g) => ({ id: g.id, name: g.name })),
+    contacts: contacts
+      .filter((c) => !c.deletedAt)
+      .map((c) => ({ id: c.id, displayName: c.displayName ?? '' })),
+  }
   return (
     <header
       className={`flex items-center px-4 h-12 border-b ${TC.borderClass} ${TC.header} gap-3 shrink-0`}
@@ -52,12 +68,14 @@ export function NavHeader({
           className={`flex-1 px-3 py-1 rounded text-sm ${TC.input} ${TC.inputText}`}
         />
       </div>
-      <button
-        onClick={onAdd}
-        className="px-3 py-1 rounded text-sm bg-sky-600 hover:bg-sky-500 text-white font-medium"
-      >
-        {t('nav.add_contact')}
-      </button>
+      <div className="w-[420px]">
+        <QuickEntry
+          ctx={ctx}
+          onCommit={onQuickAdd}
+          onTab={onOpenFullDialog}
+          onCancel={() => undefined}
+        />
+      </div>
       <button
         onClick={onOpenSettings}
         aria-label={t('nav.settings')}

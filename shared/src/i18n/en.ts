@@ -28,6 +28,7 @@ export const en = {
     groups: 'Groups',
     tags: 'Tags',
     trash: 'Trash',
+    saved: 'Saved',
   },
   field: {
     given_name: 'First name',
@@ -79,6 +80,11 @@ export const en = {
     copy: 'Copy',
     confirm: 'Confirm',
     replay_guide: 'Replay welcome guide',
+    save_filter: 'Save filter',
+    delete_filter: 'Delete',
+  },
+  prompt: {
+    filter_name: 'Filter name',
   },
   confirm: {
     delete_title: 'Delete contact?',

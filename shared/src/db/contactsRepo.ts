@@ -14,6 +14,7 @@ import type { DbAdapter } from './adapter'
 import type { Contact, Ulid } from '../types'
 import { contactToRow, rowToContact } from './contactRow'
 import { isBirthdayThisMonth } from '../core/date'
+import { runLookupGc } from './lookupGc'
 
 // ---------------------------------------------------------------------------
 // Column metadata
@@ -207,6 +208,7 @@ export function makeContactsRepo(db: DbAdapter, deviceId: string): ContactsRepo 
         }
         const row = contactToRow(next)
         await tx.execute(UPSERT_SQL, rowParams(row))
+        await runLookupGc(tx)
         return next
       })
     },
@@ -219,6 +221,7 @@ export function makeContactsRepo(db: DbAdapter, deviceId: string): ContactsRepo 
           `UPDATE contacts SET deleted_at = ?, updated_at = ?, lamport_ts = ?, device_id = ? WHERE id = ?`,
           [now, now, lts, deviceId, id],
         )
+        await runLookupGc(tx)
       })
     },
 
@@ -230,6 +233,7 @@ export function makeContactsRepo(db: DbAdapter, deviceId: string): ContactsRepo 
           `UPDATE contacts SET deleted_at = NULL, updated_at = ?, lamport_ts = ?, device_id = ? WHERE id = ?`,
           [now, lts, deviceId, id],
         )
+        await runLookupGc(tx)
       })
     },
 
@@ -264,6 +268,8 @@ export function makeContactsRepo(db: DbAdapter, deviceId: string): ContactsRepo 
           const row = contactToRow(next)
           await tx.execute(UPSERT_SQL, rowParams(row))
         }
+        // Run GC once after all rows are written, not per-row.
+        await runLookupGc(tx)
       })
     },
   }

@@ -26,13 +26,17 @@ import {
   X,
 } from './icons'
 import type { ContactFilters } from './filterTypes'
+import type { SavedFilter } from './savedFilters'
 
 interface SidebarProps {
   contacts: Contact[]
   filters: ContactFilters
   setFilter: <K extends keyof ContactFilters>(key: K, value: ContactFilters[K]) => void
+  setFilters: (next: ContactFilters) => void
   resetFilters: () => void
   onOpenSettings: () => void
+  savedFilters: SavedFilter[]
+  onDeleteSavedFilter: (id: string) => void
 }
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
@@ -41,8 +45,11 @@ export function Sidebar({
   contacts,
   filters,
   setFilter,
+  setFilters,
   resetFilters,
   onOpenSettings,
+  savedFilters,
+  onDeleteSavedFilter,
 }: SidebarProps) {
   const { TC, t, density } = useApp()
 
@@ -64,14 +71,14 @@ export function Sidebar({
     }
   }, [contacts])
 
-  const [open, setOpen] = useState({ filters: true, groups: true, tags: true })
+  const [open, setOpen] = useState({ filters: true, saved: true, groups: true, tags: true })
   const toggle = (key: keyof typeof open) => setOpen((o) => ({ ...o, [key]: !o[key] }))
 
-  const SECTION_KEYS: Array<keyof typeof open> = ['filters', 'groups', 'tags']
+  const SECTION_KEYS: Array<keyof typeof open> = ['filters', 'saved', 'groups', 'tags']
   const allExpanded = SECTION_KEYS.every((k) => open[k])
   const toggleAll = () => {
     const target = !allExpanded
-    setOpen({ filters: target, groups: target, tags: target })
+    setOpen({ filters: target, saved: target, groups: target, tags: target })
   }
 
   const itemPy = density === 'compact' ? 'py-0.5' : 'py-1.5'
@@ -208,6 +215,40 @@ export function Sidebar({
             />
           </div>
         </Section>
+
+        {/* ── Saved filter presets section (hidden when list is empty) ── */}
+        {savedFilters.length > 0 && (
+          <Section id="saved" label={t('sidebar.saved')}>
+            <div className="space-y-0.5">
+              {savedFilters.map((sf) => {
+                const isActive = JSON.stringify(filters) === JSON.stringify(sf.filters)
+                return (
+                  <div key={sf.id} className="flex items-center group">
+                    <button
+                      type="button"
+                      onClick={() => setFilters(sf.filters)}
+                      className={`flex-1 text-left px-2 py-1 rounded text-sm truncate ${
+                        isActive
+                          ? 'bg-sky-600/20 text-sky-300'
+                          : `${TC.textMuted} hover:${TC.text} ${TC.hoverBg}`
+                      }`}
+                    >
+                      {sf.name}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteSavedFilter(sf.id)}
+                      aria-label={t('actions.delete_filter')}
+                      className={`opacity-0 group-hover:opacity-60 hover:opacity-100 px-1 ${TC.textMuted}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </Section>
+        )}
 
         {/* ── Groups section ── */}
         <Section id="groups" label={t('sidebar.groups')} icon={Users}>

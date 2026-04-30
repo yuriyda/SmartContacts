@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Contact, CustomFieldDef } from '@smart-contacts/shared'
+import { ulid, type Chip, type ParsedQuickEntry } from '@smart-contacts/shared'
 import { AppProvider, useApp } from './ui/AppContext'
 import { useDb } from './store/useDb'
 import { useContacts } from './store/useContacts'
@@ -25,6 +26,12 @@ import { useKeyboard } from './ui/useKeyboard'
 import { useFilteredContacts } from './ui/useFilteredContacts'
 import { DEFAULT_FILTERS } from './ui/filterTypes'
 import type { ContactFilters } from './ui/filterTypes'
+import {
+  loadSavedFilters,
+  saveSavedFilters,
+  isFilterNonTrivial,
+  type SavedFilter,
+} from './ui/savedFilters'
 
 export function SmartContactsApp() {
   const dbState = useDb()
@@ -54,6 +61,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     setDensity,
     metaSettings,
     saveMeta,
+    deviceId,
   } = useApp()
 
   const { contacts, loading, upsert, softDelete, restore, touch, refresh } = useContacts(
@@ -103,7 +111,30 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
   )
   const resetFilters = useCallback(() => setFilters(DEFAULT_FILTERS), [])
 
+  // Saved filter presets — derived from metaSettings so they update reactively.
+  const savedFilters = useMemo(() => loadSavedFilters(metaSettings), [metaSettings])
+
+  const setAllFilters = useCallback((next: ContactFilters) => setFilters(next), [])
+
   const { toasts, push, dismiss } = useToasts()
+
+  const onSaveFilter = useCallback(async () => {
+    const name = window.prompt(t('prompt.filter_name'))
+    if (!name?.trim()) return
+    const preset: SavedFilter = { id: ulid(), name: name.trim(), filters }
+    await saveSavedFilters(saveMeta, [...savedFilters, preset])
+    push(t('actions.save_filter'))
+  }, [t, filters, saveMeta, savedFilters, push])
+
+  const onDeleteSavedFilter = useCallback(
+    async (id: string) => {
+      await saveSavedFilters(
+        saveMeta,
+        savedFilters.filter((sf) => sf.id !== id),
+      )
+    },
+    [saveMeta, savedFilters],
+  )
 
   // Hotkey-bound search input ref
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -136,6 +167,110 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       setSelectedId(c.id)
     },
     [contacts, upsert],
+  )
+
+  // Merge QuickEntry chips into a Contact object.
+  // Extracted as a standalone helper so both onQuickAdd and onOpenFullDialog share the logic.
+  const mergeChipsIntoContact = useCallback(
+    (c: Contact, chips: Chip[]): Contact => {
+      const result = { ...c }
+      for (const ch of chips) {
+        switch (ch.payload.kind) {
+          case 'tag':
+            result.tags = [...(result.tags ?? []), ch.payload.name]
+            break
+          case 'priority':
+            result.priority = ch.payload.value
+            break
+          case 'group': {
+            const id = 'g_' + ch.payload.name.toLowerCase().replace(/\s+/g, '-')
+            result.groups = [...(result.groups ?? []), { id, name: ch.payload.name }]
+            break
+          }
+          case 'phone':
+            result.phones = [
+              ...(result.phones ?? []),
+              { value: ch.payload.value, type: 'mobile', primary: true },
+            ]
+            break
+          case 'email':
+            result.emails = [
+              ...(result.emails ?? []),
+              { value: ch.payload.value, type: 'work', primary: true },
+            ]
+            break
+          case 'organization':
+            result.organizations = [{ name: ch.payload.name, current: true }]
+            break
+          case 'birthday':
+            result.events = [{ date: ch.payload.date, type: 'birthday' }]
+            break
+          case 'nickname':
+            result.nickname = ch.payload.value
+            break
+          case 'channel':
+            result.preferredChannel = ch.payload.value
+            break
+          case 'social':
+            result.socialDetected = [
+              ...(result.socialDetected ?? []),
+              { platform: ch.payload.platform, handle: ch.payload.handle },
+            ]
+            break
+          case 'relation': {
+            const { query } = ch.payload
+            const partner = contacts.find((x) =>
+              (x.displayName ?? '').toLowerCase().includes(query.toLowerCase()),
+            )
+            if (partner) {
+              result.relationsInternal = [
+                ...(result.relationsInternal ?? []),
+                { contactId: partner.id },
+              ]
+            }
+            break
+          }
+        }
+      }
+      return result
+    },
+    [contacts],
+  )
+
+  // QuickEntry: create a contact directly from the inline chips input
+  const onQuickAdd = useCallback(
+    async (parsed: ParsedQuickEntry) => {
+      if (!deviceId) return
+      const seed: Contact = {
+        id: ulid(),
+        displayName: parsed.displayName,
+        createdAt: '',
+        updatedAt: '',
+        lamportTs: 0,
+        deviceId,
+      }
+      const merged = mergeChipsIntoContact(seed, parsed.chips)
+      await handleSaveContact(merged)
+    },
+    [deviceId, mergeChipsIntoContact, handleSaveContact],
+  )
+
+  // QuickEntry Tab: open full ContactEditDialog pre-populated with parsed chips
+  const onOpenFullDialog = useCallback(
+    (parsed: ParsedQuickEntry) => {
+      if (!deviceId) return
+      const seed: Contact = {
+        id: ulid(),
+        displayName: parsed.displayName,
+        createdAt: '',
+        updatedAt: '',
+        lamportTs: 0,
+        deviceId,
+      }
+      const merged = mergeChipsIntoContact(seed, parsed.chips)
+      setEditing({ open: true, contact: merged })
+    },
+    [deviceId, mergeChipsIntoContact],
   )
 
   // Soft-delete with undo toast
@@ -228,9 +363,11 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
   return (
     <div className={`h-full flex flex-col ${TC.root}`}>
       <NavHeader
+        contacts={contacts}
         search={filters.search}
         onSearchChange={(v) => setFilter('search', v)}
-        onAdd={handleAdd}
+        onQuickAdd={onQuickAdd}
+        onOpenFullDialog={onOpenFullDialog}
         onOpenSettings={() => setSettingsOpen(true)}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}
@@ -243,8 +380,11 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
             contacts={contacts}
             filters={filters}
             setFilter={setFilter}
+            setFilters={setAllFilters}
             resetFilters={resetFilters}
             onOpenSettings={() => setSettingsOpen(true)}
+            savedFilters={savedFilters}
+            onDeleteSavedFilter={(id) => void onDeleteSavedFilter(id)}
           />
         )}
         <MainList
@@ -274,6 +414,8 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
         onThemeToggle={() => setTheme(theme === 'default' ? 'gruvbox' : 'default')}
         onModeToggle={() => setMode(mode === 'dark' ? 'light' : 'dark')}
         onDensityToggle={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
+        filterIsNonTrivial={isFilterNonTrivial(filters)}
+        onSaveFilter={() => void onSaveFilter()}
       />
 
       <ContactEditDialog

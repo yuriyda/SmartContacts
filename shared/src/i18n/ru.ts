@@ -30,6 +30,7 @@ export const ru: Dict = {
     groups: 'Группы',
     tags: 'Теги',
     trash: 'Корзина',
+    saved: 'Сохранённые',
   },
   field: {
     given_name: 'Имя',
@@ -81,6 +82,11 @@ export const ru: Dict = {
     copy: 'Копировать',
     confirm: 'Подтвердить',
     replay_guide: 'Показать гайд снова',
+    save_filter: 'Сохранить фильтр',
+    delete_filter: 'Удалить',
+  },
+  prompt: {
+    filter_name: 'Название фильтра',
   },
   confirm: {
     delete_title: 'Удалить контакт?',
