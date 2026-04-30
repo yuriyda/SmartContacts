@@ -29,6 +29,7 @@ export const en = {
     tags: 'Tags',
     organizations: 'Organizations',
     trash: 'Trash',
+    hidden: 'Hidden',
     saved: 'Saved',
     hotkeys: 'Hotkeys',
   },

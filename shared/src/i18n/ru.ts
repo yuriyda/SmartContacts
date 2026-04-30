@@ -31,6 +31,7 @@ export const ru: Dict = {
     tags: 'Теги',
     organizations: 'Организации',
     trash: 'Корзина',
+    hidden: 'Скрытые',
     saved: 'Сохранённые',
     hotkeys: 'Горячие клавиши',
   },

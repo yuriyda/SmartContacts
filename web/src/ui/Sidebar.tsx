@@ -1,7 +1,7 @@
 /**
  * @file Sidebar.tsx
  * Left navigation sidebar for Smart Contacts.
- * Renders scope filters (All / Starred / Recent / Birthdays / Trash), group list, tag list,
+ * Renders scope filters (All / Starred / Recent / Birthdays / Trash / Hidden), group list, tag list,
  * and organizations list (T3: sorted by recency, capped at 50, DnD drop targets).
  * Modeled after TaskOrchestrator/tauri-app/src/ui/Sidebar.tsx — Section + FilterItem pattern.
  * Rules: reads theme/density/t from AppContext only; no direct DB access.
@@ -20,6 +20,7 @@ import {
   Clock,
   Cake,
   Trash2,
+  EyeOff,
   Users,
   Tag,
   Briefcase,
@@ -92,8 +93,9 @@ export function Sidebar({
         (c.events ?? []).some((e) => e.type === 'birthday' && isBirthdayThisMonth(e.date)),
       ).length,
       trash: contacts.filter((c) => !!c.deletedAt).length,
+      hidden: lookups.hiddenCount,
     }
-  }, [contacts])
+  }, [contacts, lookups])
 
   const [open, setOpen] = useState({
     filters: true,
@@ -273,6 +275,13 @@ export function Sidebar({
               count={counts.trash}
               active={filters.scope === 'trash'}
               onClick={() => setFilter('scope', 'trash')}
+            />
+            <FilterItem
+              icon={EyeOff}
+              label={t('sidebar.hidden')}
+              count={counts.hidden}
+              active={filters.scope === 'hidden'}
+              onClick={() => setFilter('scope', 'hidden')}
             />
           </div>
         </Section>
