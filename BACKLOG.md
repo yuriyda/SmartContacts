@@ -16,6 +16,20 @@ task; without an owner, an item does not belong here.
 
 ## P4 (Sync engine)
 
+- **`bumpLamport` is duplicated as private inline helper in repos.**
+  Source: P2.T4 implementation. Public `bumpLamport(db)` wraps in `db.transaction`,
+  which can't be called from inside an already-open tx (see nested-tx rule
+  below). Repos inline a `bumpLamportInTx(tx)` helper that does the same
+  SQL. Consolidate when the tx contract is revisited (e.g. SAVEPOINT support
+  or splitting public/inner forms).
+
+- **`searchByName` does Cyrillic case-folding in JS, not SQL.**
+  Source: P2.T4 implementation. SQLite `lower()` / `COLLATE NOCASE` only handle
+  ASCII; ICU extension is unavailable in wa-sqlite. The repo loads alive
+  contacts and filters in JS. Acceptable for ≤ a few thousand contacts. If
+  the dataset grows, consider an FTS5 virtual table or a derived
+  `display_name_lower` column populated by a JS normalisation on write.
+
 - **`DbAdapter.transaction` does not support nesting.**
   Source: P1.T8 code review (I-5). Adapter throws on a second `BEGIN` to
   prevent stuck connections. Sync engine work in P4 is "heavy transactional"

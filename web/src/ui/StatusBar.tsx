@@ -1,48 +1,103 @@
-// Bottom status bar: contacts count, sync state placeholder, theme/mode toggles.
-// Rules: only re-queries count when db prop changes; locale from AppContext.
-import { useEffect, useState } from 'react'
-import type { DbAdapter } from '@smart-contacts/shared'
-import { themes, i18n } from '@smart-contacts/shared'
+/**
+ * @file StatusBar.tsx
+ * Bottom status bar for Smart Contacts: contact counter, sync placeholder, and toggle controls.
+ * Modeled after TaskOrchestrator/tauri-app/src/ui/StatusBar.tsx layout and visual grammar.
+ * Rules: reads TC/locale/theme/mode/density from AppContext; no direct DB access.
+ */
+import { themes } from '@smart-contacts/shared'
 import { useApp } from './AppContext'
+import { Sun, Moon, ChevronsDown, ChevronsUp, RefreshCw, ThemeSwatch } from './icons'
 
-export function StatusBar({ db }: { db: DbAdapter | null }) {
-  const { theme, mode, locale, setMode, setTheme } = useApp()
-  const tc = themes.COLOR_THEMES[theme][mode]
-  const [count, setCount] = useState(0)
-  useEffect(() => {
-    if (!db) return
-    let cancelled = false
-    void (async () => {
-      const rows = await db.select<{ c: number }>(
-        'SELECT COUNT(*) AS c FROM contacts WHERE deleted_at IS NULL',
-      )
-      if (!cancelled) setCount(Number(rows[0]?.c ?? 0))
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [db])
+interface StatusBarProps {
+  total: number
+  filtered: number
+  onLocaleToggle: () => void
+  onThemeToggle: () => void
+  onModeToggle: () => void
+  onDensityToggle: () => void
+}
+
+export function StatusBar({
+  total,
+  filtered,
+  onLocaleToggle,
+  onThemeToggle,
+  onModeToggle,
+  onDensityToggle,
+}: StatusBarProps) {
+  const { TC, t, locale, theme, mode, density, db } = useApp()
+
+  const isFiltered = filtered !== total
+  const countLabel = isFiltered
+    ? t('status.contacts_filtered', { filtered, total })
+    : t('status.contacts', { count: total })
+
+  // Resolve swatches for the current theme to pass to ThemeSwatch.
+  const swatches = themes.COLOR_THEMES[theme]?.swatches ?? ['#0ea5e9', '#374151']
+
   return (
     <footer
-      className={`flex items-center justify-between px-4 h-8 border-t ${tc.borderClass} ${tc.header} text-xs`}
+      className={`flex items-center px-4 h-8 border-t ${TC.borderClass} ${TC.header} text-xs select-none`}
     >
-      <span className={tc.textSec}>{i18n.t(locale, 'status.contacts', { count })}</span>
-      <span className="space-x-3">
+      {/* Left — count or loading */}
+      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+        {db === null ? (
+          <span className={`flex items-center gap-1.5 ${TC.textSec}`}>
+            <RefreshCw size={10} className="animate-spin" />
+            {t('status.loading')}
+          </span>
+        ) : (
+          <span className={TC.textSec}>{countLabel}</span>
+        )}
+      </div>
+
+      {/* Centre — sync placeholder */}
+      <div className={`flex-1 text-center ${TC.textMuted}`}>{t('status.sync_pending')}</div>
+
+      {/* Right — toggles */}
+      <div className="flex items-center gap-1 flex-1 justify-end">
+        {/* Locale toggle */}
         <button
-          onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}
-          className={tc.textSec}
-          aria-label="toggle theme mode"
+          onClick={onLocaleToggle}
+          className={`px-2 py-0.5 rounded text-xs transition-colors ${TC.textSec} hover:${TC.text}`}
+          aria-label={t('hotkey.settings')}
+          title={locale === 'en' ? 'Switch to Russian' : 'Switch to English'}
         >
-          {mode === 'dark' ? '☀' : '☾'}
+          {locale === 'en' ? 'RU' : 'EN'}
         </button>
+
+        {/* Theme toggle — shows swatches */}
         <button
-          onClick={() => setTheme(theme === 'default' ? 'gruvbox' : 'default')}
-          className={tc.textSec}
-          aria-label="toggle color theme"
+          onClick={onThemeToggle}
+          className={`p-1 rounded transition-colors ${TC.textSec} hover:${TC.text}`}
+          aria-label="Toggle color theme"
+          title={`Theme: ${theme}`}
         >
-          theme
+          <ThemeSwatch colors={swatches} size={14} />
         </button>
-      </span>
+
+        {/* Mode toggle (dark / light) */}
+        <button
+          onClick={onModeToggle}
+          className={`p-1 rounded transition-colors ${TC.textSec} hover:${TC.text}`}
+          aria-label={t('hotkey.settings')}
+          title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {mode === 'dark' ? <Sun size={12} /> : <Moon size={12} />}
+        </button>
+
+        {/* Density toggle */}
+        <button
+          onClick={onDensityToggle}
+          className={`p-1 rounded transition-colors ${TC.textSec} hover:${TC.text}`}
+          aria-label="Toggle density"
+          title={
+            density === 'compact' ? 'Switch to comfortable density' : 'Switch to compact density'
+          }
+        >
+          {density === 'compact' ? <ChevronsUp size={12} /> : <ChevronsDown size={12} />}
+        </button>
+      </div>
     </footer>
   )
 }

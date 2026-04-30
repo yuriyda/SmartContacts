@@ -1,34 +1,303 @@
-// Top-level shell: header + Sidebar + MainList + StatusBar, themed.
-// Rules: AppProvider must wrap Inner; useDb lives in Inner so context is available.
+/**
+ * @file SmartContactsApp.tsx
+ * Top-level shell: opens the DB via useDb (outside AppProvider), then renders ScreenBody
+ * which wires contacts, filters, selection state, dialogs, hotkeys, toasts, and onboarding.
+ * Rules: useDb must be called OUTSIDE AppProvider so db can be injected as a prop.
+ * No DB access directly in this file — all mutations go through useContacts.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Contact, CustomFieldDef } from '@smart-contacts/shared'
 import { AppProvider, useApp } from './ui/AppContext'
+import { useDb } from './store/useDb'
+import { useContacts } from './store/useContacts'
 import { Sidebar } from './ui/Sidebar'
 import { MainList } from './ui/MainList'
 import { StatusBar } from './ui/StatusBar'
-import { useDb } from './store/useDb'
-import { themes } from '@smart-contacts/shared'
+import { NavHeader } from './ui/NavHeader'
+import { ContactDetail } from './ui/ContactDetail'
+import { ContactEditDialog } from './ui/ContactEditDialog'
+import { SettingsDialog } from './ui/SettingsDialog'
+import { GuideOverlay } from './ui/GuideOverlay'
+import { HotkeyHelp } from './ui/HotkeyHelp'
+import { ToastContainer } from './ui/common'
+import { useToasts } from './ui/useToasts'
+import { useKeyboard } from './ui/useKeyboard'
+import { useFilteredContacts } from './ui/useFilteredContacts'
+import { DEFAULT_FILTERS } from './ui/filterTypes'
+import type { ContactFilters } from './ui/filterTypes'
 
-function Inner() {
-  const { theme, mode } = useApp()
-  const tc = themes.COLOR_THEMES[theme][mode]
-  const { db } = useDb()
+export function SmartContactsApp() {
+  const dbState = useDb()
   return (
-    <div className={`h-full flex flex-col ${tc.root}`}>
-      <header className={`flex items-center px-4 h-12 border-b ${tc.borderClass} ${tc.header}`}>
-        <h1 className="text-lg font-semibold">Smart Contacts</h1>
-      </header>
-      <div className="flex-1 flex min-h-0">
-        <Sidebar />
-        <MainList db={db} />
-      </div>
-      <StatusBar db={db} />
-    </div>
+    <AppProvider
+      db={dbState.db}
+      deviceId={dbState.deviceId}
+      contactsRepo={dbState.contactsRepo}
+      defsRepo={dbState.defsRepo}
+    >
+      <ScreenBody dbState={dbState} />
+    </AppProvider>
   )
 }
 
-export function SmartContactsApp() {
+function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
+  const {
+    TC,
+    t,
+    locale,
+    setLocale,
+    theme,
+    setTheme,
+    mode,
+    setMode,
+    density,
+    setDensity,
+    metaSettings,
+    saveMeta,
+  } = useApp()
+
+  const { contacts, loading, upsert, softDelete, restore, touch, refresh } = useContacts(
+    dbState.contactsRepo,
+  )
+
+  const [defs, setDefs] = useState<CustomFieldDef[]>([])
+  const [defsVersion, setDefsVersion] = useState(0)
+
+  useEffect(() => {
+    if (!dbState.defsRepo) return
+    let cancelled = false
+    void (async () => {
+      const list = await dbState.defsRepo!.list()
+      if (!cancelled) setDefs(list)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [dbState.defsRepo, defsVersion])
+
+  const refreshDefs = useCallback(async () => {
+    setDefsVersion((v) => v + 1)
+  }, [])
+
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [filters, setFilters] = useState<ContactFilters>(DEFAULT_FILTERS)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [editing, setEditing] = useState<{ open: boolean; contact: Contact | null }>({
+    open: false,
+    contact: null,
+  })
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+
+  const filtered = useFilteredContacts(contacts, filters)
+  const aliveCount = useMemo(() => contacts.filter((c) => !c.deletedAt).length, [contacts])
+  const selected = useMemo(
+    () => contacts.find((c) => c.id === selectedId) ?? null,
+    [contacts, selectedId],
+  )
+
+  const setFilter = useCallback(
+    <K extends keyof ContactFilters>(k: K, v: ContactFilters[K]) =>
+      setFilters((p) => ({ ...p, [k]: v })),
+    [],
+  )
+  const resetFilters = useCallback(() => setFilters(DEFAULT_FILTERS), [])
+
+  const { toasts, push, dismiss } = useToasts()
+
+  // Hotkey-bound search input ref
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  const handleAdd = useCallback(() => setEditing({ open: true, contact: null }), [])
+
+  const handleEdit = useCallback(() => {
+    if (!selected) return
+    setEditing({ open: true, contact: selected })
+  }, [selected])
+
+  const handleSaveContact = useCallback(
+    async (c: Contact) => {
+      await upsert(c)
+      // Mirror rule: ensure each internal relation partner has a back-link to c
+      for (const rel of c.relationsInternal ?? []) {
+        const partner = contacts.find((x) => x.id === rel.contactId)
+        if (!partner) continue
+        const has = (partner.relationsInternal ?? []).some((r) => r.contactId === c.id)
+        if (!has) {
+          const backLink =
+            rel.type !== undefined ? { contactId: c.id, type: rel.type } : { contactId: c.id }
+          await upsert({
+            ...partner,
+            relationsInternal: [...(partner.relationsInternal ?? []), backLink],
+          })
+        }
+      }
+      setEditing({ open: false, contact: null })
+      setSelectedId(c.id)
+    },
+    [contacts, upsert],
+  )
+
+  // Soft-delete with undo toast
+  const handleSoftDelete = useCallback(
+    async (id: string) => {
+      await softDelete(id)
+      push(t('confirm.delete_title'), {
+        action: { label: t('actions.restore'), onClick: () => void restore(id) },
+        duration: 5000,
+      })
+    },
+    [softDelete, push, t, restore],
+  )
+
+  // j/k navigation through filtered list
+  const navigate = useCallback(
+    (delta: 1 | -1) => {
+      if (filtered.length === 0) return
+      const idx = selectedId ? filtered.findIndex((c) => c.id === selectedId) : -1
+      let next = idx + delta
+      if (next < 0) next = 0
+      if (next >= filtered.length) next = filtered.length - 1
+      setSelectedId(filtered[next]!.id)
+    },
+    [filtered, selectedId],
+  )
+
+  useKeyboard([
+    { combo: 'cmd+n', handler: handleAdd, description: 'hotkey.add' },
+    { combo: 'cmd+,', handler: () => setSettingsOpen((o) => !o), description: 'hotkey.settings' },
+    { combo: 'j', handler: () => navigate(1), description: 'hotkey.next' },
+    { combo: 'k', handler: () => navigate(-1), description: 'hotkey.prev' },
+    { combo: 'e', handler: handleEdit, description: 'hotkey.edit' },
+    {
+      combo: 'd',
+      handler: () => selectedId && void handleSoftDelete(selectedId),
+      description: 'hotkey.delete',
+    },
+    {
+      combo: 't',
+      handler: () => selectedId && void touch(selectedId),
+      description: 'hotkey.touch',
+    },
+    {
+      combo: '/',
+      handler: () => searchInputRef.current?.focus(),
+      description: 'hotkey.search',
+      skipInInput: false,
+    },
+    { combo: '?', handler: () => setHelpOpen((o) => !o), description: 'hotkey.help' },
+    {
+      combo: 'esc',
+      handler: () => {
+        if (helpOpen) {
+          setHelpOpen(false)
+          return
+        }
+        if (editing.open) {
+          setEditing({ open: false, contact: null })
+          return
+        }
+        if (settingsOpen) {
+          setSettingsOpen(false)
+          return
+        }
+        if (filters.search) {
+          setFilter('search', '')
+          return
+        }
+      },
+      skipInInput: false,
+    },
+  ])
+
+  // Onboarding guide
+  const guideDismissed = metaSettings.guide_dismissed === '1'
+  const [guideForced, setGuideForced] = useState(false)
+  const guideOpen = !guideDismissed || guideForced
+
+  const dismissGuide = useCallback(async () => {
+    await saveMeta('guide_dismissed', '1')
+    setGuideForced(false)
+  }, [saveMeta])
+
+  const replayGuide = useCallback(async () => {
+    await saveMeta('guide_dismissed', '')
+    setGuideForced(true)
+  }, [saveMeta])
+
   return (
-    <AppProvider>
-      <Inner />
-    </AppProvider>
+    <div className={`h-full flex flex-col ${TC.root}`}>
+      <NavHeader
+        search={filters.search}
+        onSearchChange={(v) => setFilter('search', v)}
+        onAdd={handleAdd}
+        onOpenSettings={() => setSettingsOpen(true)}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen((o) => !o)}
+        searchFocusRef={searchInputRef}
+      />
+
+      <div className="flex-1 flex min-h-0">
+        {sidebarOpen && (
+          <Sidebar
+            contacts={contacts}
+            filters={filters}
+            setFilter={setFilter}
+            resetFilters={resetFilters}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        )}
+        <MainList
+          contacts={filtered}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onTouch={(id) => void touch(id)}
+          onSoftDelete={(id) => void handleSoftDelete(id)}
+          loading={loading}
+        />
+        <ContactDetail
+          contact={selected}
+          defs={defs}
+          allContacts={contacts}
+          onEdit={handleEdit}
+          onTouch={() => selectedId && void touch(selectedId)}
+          onDelete={() => selectedId && void handleSoftDelete(selectedId)}
+          onRestore={() => selectedId && void restore(selectedId)}
+          onSelectContact={setSelectedId}
+        />
+      </div>
+
+      <StatusBar
+        total={aliveCount}
+        filtered={filtered.length}
+        onLocaleToggle={() => setLocale(locale === 'en' ? 'ru' : 'en')}
+        onThemeToggle={() => setTheme(theme === 'default' ? 'gruvbox' : 'default')}
+        onModeToggle={() => setMode(mode === 'dark' ? 'light' : 'dark')}
+        onDensityToggle={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
+      />
+
+      <ContactEditDialog
+        open={editing.open}
+        contact={editing.contact}
+        defs={defs}
+        allContacts={contacts}
+        onSave={(c) => void handleSaveContact(c)}
+        onCancel={() => setEditing({ open: false, contact: null })}
+      />
+
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        contacts={contacts}
+        defs={defs}
+        refreshDefs={refreshDefs}
+        refreshContacts={refresh}
+        onResetGuide={replayGuide}
+      />
+
+      <GuideOverlay open={guideOpen} onDismiss={dismissGuide} />
+      <HotkeyHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <ToastContainer toasts={toasts} onDismiss={dismiss} />
+    </div>
   )
 }

@@ -12,12 +12,27 @@ import {
   applyMigrations,
   initDevice,
   getDeviceId,
+  makeContactsRepo,
+  makeCustomFieldDefsRepo,
   type DbAdapter,
+  type ContactsRepo,
+  type CustomFieldDefsRepo,
 } from '@smart-contacts/shared'
 
-export function useDb() {
-  const [db, setDb] = useState<DbAdapter | null>(null)
-  const [deviceId, setDeviceId] = useState<string | null>(null)
+export interface UseDbResult {
+  db: DbAdapter | null
+  deviceId: string | null
+  contactsRepo: ContactsRepo | null
+  defsRepo: CustomFieldDefsRepo | null
+}
+
+export function useDb(): UseDbResult {
+  const [state, setState] = useState<UseDbResult>({
+    db: null,
+    deviceId: null,
+    contactsRepo: null,
+    defsRepo: null,
+  })
   const adapterRef = useRef<DbAdapter | null>(null)
   useEffect(() => {
     let cancelled = false
@@ -29,8 +44,12 @@ export function useDb() {
       await initDevice(adapter)
       const did = await getDeviceId(adapter)
       if (cancelled) return
-      setDb(adapter)
-      setDeviceId(did)
+      setState({
+        db: adapter,
+        deviceId: did,
+        contactsRepo: makeContactsRepo(adapter, did),
+        defsRepo: makeCustomFieldDefsRepo(adapter, did),
+      })
     })()
     return () => {
       cancelled = true
@@ -39,5 +58,5 @@ export function useDb() {
       if (adapter) void adapter.close()
     }
   }, [])
-  return { db, deviceId }
+  return state
 }

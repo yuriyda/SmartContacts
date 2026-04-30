@@ -274,8 +274,29 @@ export async function openWaSqliteAdapter(name: string): Promise<DbAdapter> {
   )
 
   // ---- DbAdapter helpers --------------------------------------------------
+  //
+  // wa-sqlite uses a single shared connection and a global stmt registry. If two
+  // concurrent callers (e.g. two React effects running in parallel) each enter
+  // `for await (const stmt of sqlite3.statements(...))`, their generators
+  // interleave: generator A yields its stmt, callback B starts, generator A's
+  // next() then finalizes A's stmt before A's caller resumes step()/column().
+  // Result: SQLiteError "not a statement" in select().
+  //
+  // Fix: serialize select / execute / transaction through a single FIFO queue
+  // so only one SQL operation is in flight at a time. Transactions are atomic
+  // single units in the queue — their inner select/execute calls bypass the
+  // queue (see runInner) so they don't deadlock on the outer queue slot.
+  let queue: Promise<unknown> = Promise.resolve()
+  function serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const next = queue.then(fn, fn)
+    queue = next.then(
+      () => undefined,
+      () => undefined,
+    )
+    return next
+  }
 
-  async function select<T = Record<string, unknown>>(
+  async function selectInner<T = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
   ): Promise<T[]> {
@@ -300,7 +321,6 @@ export async function openWaSqliteAdapter(name: string): Promise<DbAdapter> {
         }
       }
     } catch (err: unknown) {
-      // Treat "no such table" as empty result set, matching the mock adapter contract.
       const e = err as { message?: string; code?: number }
       if (typeof e?.message === 'string' && e.message.includes('no such table')) {
         return []
@@ -310,7 +330,7 @@ export async function openWaSqliteAdapter(name: string): Promise<DbAdapter> {
     return results
   }
 
-  async function execute(sql: string, params?: unknown[]): Promise<void> {
+  async function executeInner(sql: string, params?: unknown[]): Promise<void> {
     for await (const stmt of sqlite3.statements(db, sql)) {
       if (params && params.length > 0) {
         sqlite3.bind_collection(stmt, params)
@@ -320,29 +340,59 @@ export async function openWaSqliteAdapter(name: string): Promise<DbAdapter> {
   }
 
   let inTransaction = false
+
+  // Public wrappers: serialized by default. Inside a transaction, the inner
+  // adapter's select/execute call the *Inner variants directly so they don't
+  // re-enter the queue and deadlock waiting for the outer transaction slot.
+  async function select<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<T[]> {
+    if (inTransaction) return selectInner<T>(sql, params)
+    return serialize(() => selectInner<T>(sql, params))
+  }
+
+  async function execute(sql: string, params?: unknown[]): Promise<void> {
+    if (inTransaction) return executeInner(sql, params)
+    return serialize(async () => {
+      await executeInner(sql, params)
+      // Outside a transaction every execute is its own write; flush eagerly
+      // so single-statement writes (e.g. saveMeta) are durable before resolve.
+      await vfs.flushNow()
+    })
+  }
+
   async function transaction<T>(fn: (tx: DbAdapter) => Promise<T>): Promise<T> {
-    // Nested transactions are not supported by this adapter — issuing a second
-    // BEGIN would error inside SQLite and corrupt outer-transaction state.
-    // Throw before mutating anything so callers see a clear contract violation.
+    // Nested transactions are not supported — issuing a second BEGIN would
+    // error inside SQLite and corrupt outer-transaction state.
     if (inTransaction) {
       throw new Error(
         'wa-sqlite-backend: nested transactions are not supported (no SAVEPOINT support).',
       )
     }
-    inTransaction = true
-    try {
-      await execute('BEGIN')
+    return serialize(async () => {
+      inTransaction = true
       try {
-        const result = await fn(adapter)
-        await execute('COMMIT')
-        return result
-      } catch (err) {
-        await execute('ROLLBACK').catch(() => undefined)
-        throw err
+        await executeInner('BEGIN')
+        try {
+          const result = await fn(adapter)
+          await executeInner('COMMIT')
+          // Force a synchronous flush after every committed transaction so
+          // multi-call writers (loadDemo: defs.upsert × 3 + bulkLoad + meta INSERT)
+          // are durably persisted before the caller observes "done". Without this,
+          // a debounced 250ms timer can be reset by subsequent writes and the
+          // earlier transaction's pages stay in-memory only — visible in the
+          // adapter but absent from the IndexedDB snapshot.
+          await vfs.flushNow()
+          return result
+        } catch (err) {
+          await executeInner('ROLLBACK').catch(() => undefined)
+          throw err
+        }
+      } finally {
+        inTransaction = false
       }
-    } finally {
-      inTransaction = false
-    }
+    })
   }
 
   async function close(): Promise<void> {
