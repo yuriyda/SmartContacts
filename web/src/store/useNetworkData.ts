@@ -2,6 +2,11 @@
  * @file useNetworkData.ts
  * Read-only hook that loads recent interactions (last 90 days) and all open contact_tasks.
  * Used by the NetworkDashboard widgets. Active only when activeView === 'network'.
+ *
+ * Also exports useOpenTasks — a lightweight hook that always loads open tasks regardless
+ * of active view. Used by the notification scheduler so it can fire even when the user
+ * is on the Contacts view.
+ *
  * Rules: no writes — read-only data fetch on mount + on `version` bump.
  */
 import { useEffect, useMemo, useState } from 'react'
@@ -53,4 +58,26 @@ export function useNetworkData(
   const reload = useMemo(() => () => setVersion((v) => v + 1), [])
 
   return { recentInteractions, openTasks, loading, reload }
+}
+
+/**
+ * Thin hook: always loads open tasks when tasksRepo is available.
+ * Used by notification scheduler to have task data regardless of active view.
+ */
+export function useOpenTasks(tasksRepo: ContactTasksRepo | null): ContactTask[] {
+  const [openTasks, setOpenTasks] = useState<ContactTask[]>([])
+
+  useEffect(() => {
+    if (!tasksRepo) return
+    let cancelled = false
+    void (async () => {
+      const tasks = await tasksRepo.listAllOpen()
+      if (!cancelled) setOpenTasks(tasks)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [tasksRepo])
+
+  return openTasks
 }

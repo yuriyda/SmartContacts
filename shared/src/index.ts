@@ -38,6 +38,12 @@ export {
   type UpcomingItem,
   type OpenTaskItem,
 } from './core/networkWidgets'
+export {
+  buildDailySummary,
+  nextFireMs,
+  shouldFireNow,
+  type NotificationContent,
+} from './core/networkNotifications'
 export * from './parse/quickEntryContacts'
 export * from './sync/sync'
 export * from './sync/syncEngine'

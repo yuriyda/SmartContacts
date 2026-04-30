@@ -1,10 +1,12 @@
 /**
  * @file NetworkTab.tsx
- * Settings tab: Network feature controls — stale thresholds, my_city, show_score.
- * Spec §15.10 / §15.5.
+ * Settings tab: Network feature controls — daily notifications, stale thresholds, my_city, show_score.
+ * Spec §15.10 / §15.5 / §15.6.
  *
  * Rules:
- *  - Persists in meta_settings: stale_thresholds_v1 (JSON), my_city_v1 (string), show_score_v1 ('0'|'1').
+ *  - Persists in meta_settings: notifications_enabled_v1 ('0'|'1'), notify_time_v1 (HH string),
+ *    stale_thresholds_v1 (JSON), my_city_v1 (string), show_score_v1 ('0'|'1').
+ *  - Notification toggle requests browser permission before enabling.
  *  - On change of threshold field: write JSON immediately to meta. On blur, validate and revert if NaN.
  *  - No `any` types.
  */
@@ -19,6 +21,10 @@ interface NetworkTabProps {
 
 export function NetworkTab({ onToast }: NetworkTabProps) {
   const { TC, t, metaSettings, saveMeta } = useApp()
+
+  // Notification settings
+  const notifEnabled = metaSettings.notifications_enabled_v1 === '1'
+  const notifyTime = metaSettings.notify_time_v1 ?? '09'
 
   // Local editing state for thresholds (debounced flush on blur).
   const persisted = readStaleThresholds(metaSettings)
@@ -84,6 +90,53 @@ export function NetworkTab({ onToast }: NetworkTabProps) {
 
   return (
     <div className="space-y-5">
+      {/* Notification settings */}
+      <div>
+        <h4 className={`text-sm font-medium ${TC.text} mb-2`}>{t('settings.notify.label')}</h4>
+        <p className={`text-xs ${TC.textMuted} mb-3`}>{t('settings.notify.body')}</p>
+
+        <label className="flex items-center gap-2 text-sm mb-2">
+          <input
+            type="checkbox"
+            checked={notifEnabled}
+            onChange={async (e) => {
+              const want = e.target.checked
+              if (!want) {
+                await saveMeta('notifications_enabled_v1', '0')
+                return
+              }
+              if (typeof Notification === 'undefined') {
+                onToast(t('settings.notify.unsupported'))
+                return
+              }
+              const result = await Notification.requestPermission()
+              if (result !== 'granted') {
+                onToast(t('settings.notify.permission_denied'))
+                return
+              }
+              await saveMeta('notifications_enabled_v1', '1')
+            }}
+          />
+          <span className={TC.text}>{t('settings.notify.enable')}</span>
+        </label>
+
+        <label className="flex items-center gap-2 text-sm ml-6">
+          <span className={TC.textSec}>{t('settings.notify.time_label')}</span>
+          <select
+            value={notifyTime}
+            onChange={(e) => void saveMeta('notify_time_v1', e.target.value)}
+            disabled={!notifEnabled}
+            className={`px-2 py-1 rounded border ${TC.borderClass} ${TC.elevated} ${TC.text} text-sm disabled:opacity-50`}
+          >
+            {Array.from({ length: 24 }, (_, h) => (
+              <option key={h} value={String(h).padStart(2, '0')}>
+                {String(h).padStart(2, '0')}:00
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       <div>
         <h4 className={`text-sm font-medium ${TC.text} mb-2`}>
           {t('settings.network.thresholds_label')}

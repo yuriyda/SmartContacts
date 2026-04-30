@@ -184,6 +184,16 @@ export const en = {
       apply_now: 'Apply now',
       applied: 'Marked {n} contact(s) as protected',
     },
+    notify: {
+      label: 'Daily notifications',
+      body: "Show one daily browser notification summarizing today's birthdays, reminders, and tasks. The app tab must be open at the configured time.",
+      enable: 'Enable notifications',
+      time_label: 'At',
+      unsupported: 'This browser does not support notifications.',
+      permission_denied: 'Notification permission was not granted.',
+      daily_title: 'Smart Contacts — today',
+      daily_empty: 'No items today',
+    },
   },
   sync: {
     status: 'Status',

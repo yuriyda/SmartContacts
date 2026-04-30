@@ -20,7 +20,8 @@ import {
 import { AppProvider, useApp } from './ui/AppContext'
 import { useDb } from './store/useDb'
 import { useContacts } from './store/useContacts'
-import { useNetworkData } from './store/useNetworkData'
+import { useNetworkData, useOpenTasks } from './store/useNetworkData'
+import { useNotificationScheduler } from './store/useNotificationScheduler'
 import { useInteractions } from './store/useInteractions'
 import { useContactTasks } from './store/useContactTasks'
 import { Sidebar } from './ui/Sidebar'
@@ -168,6 +169,20 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     dbState.tasksRepo,
     activeView === 'network',
   )
+
+  // Always-loaded open tasks for the notification scheduler (fires regardless of active view).
+  const openTasksForNotifications = useOpenTasks(dbState.tasksRepo)
+
+  useNotificationScheduler({
+    enabled: metaSettings.notifications_enabled_v1 === '1',
+    hourStr: metaSettings.notify_time_v1 ?? '09',
+    lastFiredISO: metaSettings.last_fired_v1,
+    contacts,
+    openTasks: openTasksForNotifications,
+    saveMeta,
+    i18nTitle: t('settings.notify.daily_title'),
+    i18nEmpty: t('settings.notify.daily_empty'),
+  })
 
   // ---------------------------------------------------------------------------
 
