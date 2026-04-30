@@ -1,6 +1,6 @@
 // Contact domain action helpers for Smart Contacts.
 // Contains: Lamport clock bumping, bidirectional relation mirroring,
-// custom field validation, and display name computation.
+// custom field validation, display name computation, and changed-field counting.
 //
 // Rules:
 //  - bumpLamport is the ONLY function here that touches the DB.
@@ -61,6 +61,32 @@ export function mirrorInternalRelation(
 export function validateCustomFieldKeys(c: Contact, defIds: Set<Ulid>): string[] {
   if (!c.customFields) return []
   return Object.keys(c.customFields).filter((k) => !defIds.has(k))
+}
+
+/**
+ * Count how many fields in `edited` differ from `original`.
+ * Shallow compare; arrays and objects compared via JSON.stringify.
+ * Identity (same reference) → 0.
+ * Used by P7.T5 to summarize "N field(s) changed" before confirming an edit on a protected contact.
+ */
+export function countChangedFields(original: Contact, edited: Contact): number {
+  if (original === edited) return 0
+  let diff = 0
+  // Build a union key set; skip metadata fields that are normal to bump on every save.
+  const skip = new Set(['updatedAt', 'lamportTs', 'deviceId'])
+  const keys = new Set<string>([...Object.keys(original), ...Object.keys(edited)])
+  for (const k of keys) {
+    if (skip.has(k)) continue
+    const a = (original as unknown as Record<string, unknown>)[k]
+    const b = (edited as unknown as Record<string, unknown>)[k]
+    if (a === b) continue
+    if (typeof a === 'object' || typeof b === 'object') {
+      if (JSON.stringify(a) !== JSON.stringify(b)) diff++
+    } else {
+      diff++
+    }
+  }
+  return diff
 }
 
 /**

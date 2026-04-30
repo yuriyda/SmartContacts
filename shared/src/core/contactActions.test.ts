@@ -15,6 +15,7 @@ import {
   mirrorInternalRelation,
   validateCustomFieldKeys,
   computeDisplayName,
+  countChangedFields,
 } from './contactActions'
 
 // ---------------------------------------------------------------------------
@@ -143,5 +144,83 @@ describe('validateCustomFieldKeys', () => {
   test('returns empty when contact has no customFields', () => {
     const c = {} as Contact
     expect(validateCustomFieldKeys(c, new Set(['foo']))).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// countChangedFields
+// ---------------------------------------------------------------------------
+
+/** Minimal valid Contact fixture for countChangedFields tests. */
+function makeContact(overrides: Partial<Contact> = {}): Contact {
+  return {
+    id: 'C1',
+    createdAt: '2024-01-01',
+    updatedAt: '2024-01-01',
+    lamportTs: 1,
+    deviceId: 'DEV',
+    ...overrides,
+  }
+}
+
+describe('countChangedFields', () => {
+  test('same reference returns 0', () => {
+    const c = makeContact()
+    expect(countChangedFields(c, c)).toBe(0)
+  })
+
+  test('shallow clone with no value changes returns 0', () => {
+    const c = makeContact({ givenName: 'Alice' })
+    expect(countChangedFields(c, { ...c })).toBe(0)
+  })
+
+  test('changing givenName counts as 1', () => {
+    const original = makeContact({ givenName: 'Alice' })
+    const edited = { ...original, givenName: 'Bob' }
+    expect(countChangedFields(original, edited)).toBe(1)
+  })
+
+  test('changing givenName AND priority counts as 2', () => {
+    const original = makeContact({ givenName: 'Alice', priority: 3 })
+    const edited = { ...original, givenName: 'Bob', priority: 1 }
+    expect(countChangedFields(original, edited)).toBe(2)
+  })
+
+  test('changing tags array content counts as 1', () => {
+    const original = makeContact({ tags: ['work'] })
+    const edited = { ...original, tags: ['home'] }
+    expect(countChangedFields(original, edited)).toBe(1)
+  })
+
+  test('identical tags array (different reference) counts as 0', () => {
+    const original = makeContact({ tags: ['work', 'vip'] })
+    const edited = { ...original, tags: ['work', 'vip'] }
+    expect(countChangedFields(original, edited)).toBe(0)
+  })
+
+  test('changing phones array counts as 1', () => {
+    const original = makeContact({ phones: [{ value: '+1', type: 'mobile', primary: true }] })
+    const edited = { ...original, phones: [{ value: '+2', type: 'mobile', primary: true }] }
+    expect(countChangedFields(original, edited)).toBe(1)
+  })
+
+  test('bumping only updatedAt and lamportTs counts as 0 (skip list)', () => {
+    const original = makeContact()
+    const edited = { ...original, updatedAt: '2025-01-01', lamportTs: 99 }
+    expect(countChangedFields(original, edited)).toBe(0)
+  })
+
+  test('adding a field absent in original counts as 1', () => {
+    const original = makeContact()
+    const edited = { ...original, givenName: 'Alice' }
+    expect(countChangedFields(original, edited)).toBe(1)
+  })
+
+  test('removing a field present in original counts as 1', () => {
+    const original = makeContact({ givenName: 'Alice' })
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { givenName: _removed, ...rest } = original
+    const edited = rest as Contact
+    expect(countChangedFields(original, edited)).toBe(1)
   })
 })

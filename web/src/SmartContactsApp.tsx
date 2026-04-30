@@ -15,6 +15,7 @@ import {
   addContactToGroup,
   addContactToTag,
   addContactToOrganization,
+  countChangedFields,
 } from '@smart-contacts/shared'
 import { AppProvider, useApp } from './ui/AppContext'
 import { useDb } from './store/useDb'
@@ -215,6 +216,15 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
 
   const handleSaveContact = useCallback(
     async (c: Contact) => {
+      // Extra confirm when editing a protected contact with actual changes
+      const original = contacts.find((x) => x.id === c.id)
+      if (original?.protected) {
+        const changed = countChangedFields(original, c)
+        if (changed > 0) {
+          const ok = window.confirm(t('confirm.protect_edit_summary', { n: changed }))
+          if (!ok) return
+        }
+      }
       await upsert(c)
       // Mirror rule: ensure each internal relation partner has a back-link to c
       for (const rel of c.relationsInternal ?? []) {
@@ -233,7 +243,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       setEditing({ open: false, contact: null })
       setSelectedId(c.id)
     },
-    [contacts, upsert],
+    [contacts, upsert, t],
   )
 
   // ---------------------------------------------------------------------------
@@ -383,16 +393,22 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     [deviceId, mergeChipsIntoContact],
   )
 
-  // Soft-delete with undo toast
+  // Soft-delete with undo toast; requires extra confirm for protected contacts
   const handleSoftDelete = useCallback(
     async (id: string) => {
+      const c = contacts.find((x) => x.id === id)
+      if (!c) return
+      if (c.protected) {
+        const ok = window.confirm(t('confirm.protect_delete_body', { name: c.displayName ?? '' }))
+        if (!ok) return
+      }
       await softDelete(id)
       push(t('confirm.delete_title'), {
         action: { label: t('actions.restore'), onClick: () => void restore(id) },
         duration: 5000,
       })
     },
-    [softDelete, push, t, restore],
+    [contacts, softDelete, push, t, restore],
   )
 
   const onToggleProtect = useCallback(

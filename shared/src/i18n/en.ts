@@ -108,6 +108,8 @@ export const en = {
     reset_body: 'This deletes contacts, custom fields, and avatars. Cannot be undone.',
     unprotect_body: 'Remove protection from {name}?',
     hide_body: 'Hide {name}? It will not appear in default lists.',
+    protect_delete_body: 'Delete protected contact {name}? It will be moved to Trash.',
+    protect_edit_summary: '{n} field(s) will change on a protected contact. Save?',
   },
   demo: {
     load_en: 'Load demo data (English)',
