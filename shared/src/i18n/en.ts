@@ -123,6 +123,7 @@ export const en = {
     merge: 'Merge',
     replace: 'Replace',
     imported: 'Imported: {inserted} new, {updated} updated, {skipped} skipped',
+    include_hidden: 'Include hidden contacts in export',
   },
   settings: {
     title: 'Settings',
@@ -131,9 +132,17 @@ export const en = {
       general: 'General',
       custom_fields: 'Custom fields',
       backup: 'Backup / Restore',
+      privacy: 'Privacy',
       google_sync: 'Google sync',
       about: 'About',
       onboarding: 'Onboarding',
+    },
+    auto_protect: {
+      label: 'Auto-protect high-priority contacts',
+      body: 'When applied, contacts with priority at or above the threshold are marked as protected.',
+      threshold_label: 'Priority ≤',
+      apply_now: 'Apply now',
+      applied: 'Marked {n} contact(s) as protected',
     },
   },
   sync: {

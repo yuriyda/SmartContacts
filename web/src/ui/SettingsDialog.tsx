@@ -22,19 +22,28 @@ import { BackupTab } from './settings/BackupTab'
 import { AboutTab } from './settings/AboutTab'
 import { GoogleSyncTab } from './settings/GoogleSyncTab'
 import { OnboardingTab } from './settings/OnboardingTab'
+import { PrivacyTab } from './settings/PrivacyTab'
 import { ulid } from '@smart-contacts/shared'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type TabKey = 'general' | 'custom_fields' | 'backup' | 'google_sync' | 'about' | 'onboarding'
+type TabKey =
+  | 'general'
+  | 'custom_fields'
+  | 'backup'
+  | 'privacy'
+  | 'google_sync'
+  | 'about'
+  | 'onboarding'
 
 export interface SettingsDialogProps {
   open: boolean
   initialTab?: TabKey
   onClose: () => void
   contacts: Contact[]
+  upsert: (c: Contact) => Promise<Contact | null>
   defs: CustomFieldDef[]
   refreshDefs: () => Promise<void>
   refreshContacts: () => void
@@ -56,6 +65,7 @@ const TABS: { key: TabKey; labelKey: string }[] = [
   { key: 'general', labelKey: 'settings.tabs.general' },
   { key: 'custom_fields', labelKey: 'settings.tabs.custom_fields' },
   { key: 'backup', labelKey: 'settings.tabs.backup' },
+  { key: 'privacy', labelKey: 'settings.tabs.privacy' },
   { key: 'google_sync', labelKey: 'settings.tabs.google_sync' },
   { key: 'about', labelKey: 'settings.tabs.about' },
   { key: 'onboarding', labelKey: 'settings.tabs.onboarding' },
@@ -69,7 +79,8 @@ export function SettingsDialog({
   open,
   initialTab = 'general',
   onClose,
-  contacts: _contacts,
+  contacts,
+  upsert,
   defs,
   refreshDefs,
   refreshContacts,
@@ -190,6 +201,9 @@ export function SettingsDialog({
                   refreshDefs={refreshDefs}
                   onToast={addToast}
                 />
+              )}
+              {tab === 'privacy' && (
+                <PrivacyTab contacts={contacts} upsert={upsert} onToast={addToast} />
               )}
               {tab === 'google_sync' && <GoogleSyncTab />}
               {tab === 'about' && <AboutTab onToast={addToast} />}

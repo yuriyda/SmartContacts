@@ -1,4 +1,5 @@
-// Tests for backup.ts: export, replace-import, merge-import, and version rejection.
+// Tests for backup.ts: export, replace-import, merge-import, version rejection,
+// and ExportOptions.includeHidden filtering behaviour.
 // Uses wa-sqlite in-memory via fake-indexeddb to exercise real SQL paths.
 // @vitest-environment node
 import 'fake-indexeddb/auto'
@@ -101,6 +102,87 @@ describe('backup', () => {
     const db = await fresh('backup-version')
     const bad = { version: 2 } as unknown as BackupBundle
     await expect(importBackup(db, bad, 'merge')).rejects.toThrow(/version/)
+    await db.close()
+  })
+
+  test('default export excludes hidden contacts', async () => {
+    const db = await fresh('backup-hidden-default')
+    const did = await getDeviceId(db)
+    const repo = makeContactsRepo(db, did)
+
+    await repo.upsert({
+      id: ulid(),
+      createdAt: '',
+      updatedAt: '',
+      lamportTs: 0,
+      deviceId: did,
+      displayName: 'Visible',
+      hidden: false,
+    } as Contact)
+    await repo.upsert({
+      id: ulid(),
+      createdAt: '',
+      updatedAt: '',
+      lamportTs: 0,
+      deviceId: did,
+      displayName: 'HiddenOne',
+      hidden: true,
+    } as Contact)
+
+    const bundle = await exportBackup(db)
+    expect(bundle.contacts.map((c) => c.displayName)).toContain('Visible')
+    expect(bundle.contacts.map((c) => c.displayName)).not.toContain('HiddenOne')
+    await db.close()
+  })
+
+  test('exportBackup({ includeHidden: false }) also excludes hidden contacts', async () => {
+    const db = await fresh('backup-hidden-false')
+    const did = await getDeviceId(db)
+    const repo = makeContactsRepo(db, did)
+
+    await repo.upsert({
+      id: ulid(),
+      createdAt: '',
+      updatedAt: '',
+      lamportTs: 0,
+      deviceId: did,
+      displayName: 'HiddenTwo',
+      hidden: true,
+    } as Contact)
+
+    const bundle = await exportBackup(db, { includeHidden: false })
+    expect(bundle.contacts.map((c) => c.displayName)).not.toContain('HiddenTwo')
+    await db.close()
+  })
+
+  test('exportBackup({ includeHidden: true }) includes hidden contacts', async () => {
+    const db = await fresh('backup-hidden-true')
+    const did = await getDeviceId(db)
+    const repo = makeContactsRepo(db, did)
+
+    await repo.upsert({
+      id: ulid(),
+      createdAt: '',
+      updatedAt: '',
+      lamportTs: 0,
+      deviceId: did,
+      displayName: 'Visible2',
+      hidden: false,
+    } as Contact)
+    await repo.upsert({
+      id: ulid(),
+      createdAt: '',
+      updatedAt: '',
+      lamportTs: 0,
+      deviceId: did,
+      displayName: 'HiddenThree',
+      hidden: true,
+    } as Contact)
+
+    const bundle = await exportBackup(db, { includeHidden: true })
+    const names = bundle.contacts.map((c) => c.displayName)
+    expect(names).toContain('Visible2')
+    expect(names).toContain('HiddenThree')
     await db.close()
   })
 })

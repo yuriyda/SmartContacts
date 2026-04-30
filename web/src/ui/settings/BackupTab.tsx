@@ -37,12 +37,13 @@ export function BackupTab({ refreshContacts, refreshDefs, onToast }: BackupTabPr
   const [confirmReplace, setConfirmReplace] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [includeHidden, setIncludeHidden] = useState(false)
 
   // ----- Export -----
 
   const handleExport = useCallback(async () => {
     if (!db) return
-    const bundle = await exportBackup(db)
+    const bundle = await exportBackup(db, { includeHidden })
     const json = JSON.stringify(bundle, null, 2)
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -51,7 +52,7 @@ export function BackupTab({ refreshContacts, refreshDefs, onToast }: BackupTabPr
     a.download = `contacts-backup-${new Date().toISOString().slice(0, 19).replace(/:/g, '')}.json`
     a.click()
     URL.revokeObjectURL(url)
-  }, [db])
+  }, [db, includeHidden])
 
   // ----- Import: file picked -----
 
@@ -126,6 +127,14 @@ export function BackupTab({ refreshContacts, refreshDefs, onToast }: BackupTabPr
       {/* Export */}
       <div className="space-y-2">
         <h3 className={`text-xs font-semibold uppercase tracking-wider ${TC.textMuted}`}>Export</h3>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={includeHidden}
+            onChange={(e) => setIncludeHidden(e.target.checked)}
+          />
+          <span className={TC.textSec}>{t('backup.include_hidden')}</span>
+        </label>
         <button
           type="button"
           onClick={() => void handleExport()}

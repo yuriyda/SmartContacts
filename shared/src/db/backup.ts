@@ -3,6 +3,9 @@
 //   - 'replace': wipe all tables, then bulk-insert the bundle as-is (no Lamport bumping).
 //   - 'merge': Lamport-aware merge per-record; last-write-wins for meta keys.
 //
+// ExportOptions.includeHidden controls whether hidden contacts appear in the export bundle.
+// Default is false (hidden contacts are excluded); pass { includeHidden: true } for full export.
+//
 // Rules:
 //  - All importBackup writes MUST run inside db.transaction().
 //  - version !== 1 is rejected before any DB access.
@@ -19,6 +22,12 @@ import { contactToRow, rowToContact } from './contactRow'
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
+
+/** Options controlling what is included in the exported bundle. */
+export interface ExportOptions {
+  /** When true, hidden contacts are included in the export. Default: false. */
+  includeHidden?: boolean
+}
 
 export interface BackupBundle {
   version: 1
@@ -143,10 +152,11 @@ function contactRowParams(row: Record<string, unknown>): unknown[] {
 // ---------------------------------------------------------------------------
 
 /** Export all data from the database into a portable JSON bundle. */
-export async function exportBackup(db: DbAdapter): Promise<BackupBundle> {
+export async function exportBackup(db: DbAdapter, opts?: ExportOptions): Promise<BackupBundle> {
   // SELECT all contacts including deleted (lossless backup).
   const contactRows = await db.select<Record<string, unknown>>('SELECT * FROM contacts')
-  const contacts = contactRows.map(rowToContact)
+  // Filter hidden contacts unless explicitly included via opts.
+  const contacts = contactRows.map(rowToContact).filter((c) => opts?.includeHidden || !c.hidden)
 
   // SELECT all custom field defs including deleted.
   const defRows = await db.select<Record<string, unknown>>('SELECT * FROM custom_field_defs')

@@ -124,6 +124,7 @@ export const ru: Dict = {
     merge: 'Объединить',
     replace: 'Заменить',
     imported: 'Импортировано: {inserted} новых, {updated} обновлено, {skipped} пропущено',
+    include_hidden: 'Включить скрытые контакты в экспорт',
   },
   settings: {
     title: 'Настройки',
@@ -132,9 +133,17 @@ export const ru: Dict = {
       general: 'Общее',
       custom_fields: 'Свои поля',
       backup: 'Бэкап',
+      privacy: 'Приватность',
       google_sync: 'Google-синхронизация',
       about: 'О программе',
       onboarding: 'Онбординг',
+    },
+    auto_protect: {
+      label: 'Авто-защита приоритетных контактов',
+      body: 'Контакты с приоритетом не ниже порога будут помечены защищёнными.',
+      threshold_label: 'Приоритет ≤',
+      apply_now: 'Применить сейчас',
+      applied: 'Помечено защищёнными: {n}',
     },
   },
   sync: {

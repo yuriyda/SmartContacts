@@ -613,6 +613,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         contacts={contacts}
+        upsert={upsert}
         defs={defs}
         refreshDefs={refreshDefs}
         refreshContacts={refresh}
