@@ -116,9 +116,18 @@ export const en = {
       general: 'General',
       custom_fields: 'Custom fields',
       backup: 'Backup / Restore',
+      google_sync: 'Google sync',
       about: 'About',
       onboarding: 'Onboarding',
     },
+  },
+  sync: {
+    status: 'Status',
+    not_configured: 'OAuth not configured (P5 will add Sign in with Google)',
+    now: 'Sync now',
+    last: 'Last sync',
+    never: 'never',
+    reset: 'Reset sync state',
   },
   guide: {
     title: 'Welcome to Smart Contacts',

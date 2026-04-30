@@ -14,6 +14,40 @@ task; without an owner, an item does not belong here.
   and persist Google's label, or (b) explicitly document the data loss in the
   Google sync section.
 
+- **Wire Google Identity Services (GIS) for real access tokens.**
+  Source: P4.T2 (`shared/src/google/oauth.ts`). Today `makeStubAccessTokenSource()`
+  throws `OAuthNotConfiguredError`. P5 must: (a) inject the GIS script via
+  `<script async defer src="https://accounts.google.com/gsi/client">` in
+  `web/index.html` and `pwa/index.html`; (b) read the OAuth client ID from
+  `import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID`; (c) implement an
+  `AccessTokenSource` backed by `google.accounts.oauth2.initTokenClient` with
+  scope set including `drive.appdata`, `contacts`, `openid email profile`;
+  (d) document the Google Cloud Console setup in a new `GOOGLE_SETUP.md`.
+
+- **Replace `GoogleSyncTab` disabled state with real sign-in flow.**
+  Source: P4.T4 (`web/src/ui/settings/GoogleSyncTab.tsx`). Tab is currently
+  presentational with disabled buttons. P5 must replace it end-to-end with:
+  signed-out CTA → `Sign in with Google` button; signed-in state showing email
+  + last-sync timestamp (`meta.last_sync_at`) + working `Sync now` button + a
+  working `Reset sync state` button (clears `vector_clock`, `meta.last_sync_at`,
+  and remote `appDataFolder` file). On click of `Sync now`, call
+  `syncEngine.syncOnce(deps)`.
+
+- **Connect `MergeConflictDialog` for per-record conflicts.**
+  Source: spec §5 + P4 plan task 5. When People API etag mismatch is detected
+  during sync (Google copy diverged from our last-known etag), surface a
+  conflict UI letting the user pick `local`, `remote`, or `merge field-by-field`.
+  Component: `web/src/ui/MergeConflictDialog.tsx`. Wire from the Google
+  Contacts adapter inside `syncEngine`.
+
+- **People API field mapping module.**
+  Source: spec §5. Create `shared/src/google/peopleMapping.ts` translating
+  between our `Contact` type and Google People API JSON resources. All 15
+  standard fields + extension fields where Google has equivalents
+  (organizations, urls, addresses, events, im_clients, relations_external).
+  Custom fields go to `userDefined`. Avatar URLs go through the P5 avatar
+  pipeline (spec §6) — actual blobs not part of People API payloads.
+
 ## P4 (Sync engine)
 
 - **`bumpLamport` is duplicated as private inline helper in repos.**

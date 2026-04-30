@@ -20,6 +20,7 @@ import { GeneralTab } from './settings/GeneralTab'
 import { CustomFieldsTab } from './settings/CustomFieldsTab'
 import { BackupTab } from './settings/BackupTab'
 import { AboutTab } from './settings/AboutTab'
+import { GoogleSyncTab } from './settings/GoogleSyncTab'
 import { OnboardingTab } from './settings/OnboardingTab'
 import { ulid } from '@smart-contacts/shared'
 
@@ -27,7 +28,7 @@ import { ulid } from '@smart-contacts/shared'
 // Types
 // ---------------------------------------------------------------------------
 
-type TabKey = 'general' | 'custom_fields' | 'backup' | 'about' | 'onboarding'
+type TabKey = 'general' | 'custom_fields' | 'backup' | 'google_sync' | 'about' | 'onboarding'
 
 export interface SettingsDialogProps {
   open: boolean
@@ -53,6 +54,7 @@ const TABS: { key: TabKey; labelKey: string }[] = [
   { key: 'general', labelKey: 'settings.tabs.general' },
   { key: 'custom_fields', labelKey: 'settings.tabs.custom_fields' },
   { key: 'backup', labelKey: 'settings.tabs.backup' },
+  { key: 'google_sync', labelKey: 'settings.tabs.google_sync' },
   { key: 'about', labelKey: 'settings.tabs.about' },
   { key: 'onboarding', labelKey: 'settings.tabs.onboarding' },
 ]
@@ -185,6 +187,7 @@ export function SettingsDialog({
                   onToast={addToast}
                 />
               )}
+              {tab === 'google_sync' && <GoogleSyncTab />}
               {tab === 'about' && <AboutTab onToast={addToast} />}
               {tab === 'onboarding' && <OnboardingTab onResetGuide={onResetGuide} />}
             </div>

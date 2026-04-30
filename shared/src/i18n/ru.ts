@@ -117,9 +117,18 @@ export const ru: Dict = {
       general: 'Общее',
       custom_fields: 'Свои поля',
       backup: 'Бэкап',
+      google_sync: 'Google-синхронизация',
       about: 'О программе',
       onboarding: 'Онбординг',
     },
+  },
+  sync: {
+    status: 'Статус',
+    not_configured: 'OAuth не настроен (P5 добавит «Войти через Google»)',
+    now: 'Синхронизировать сейчас',
+    last: 'Последняя синхронизация',
+    never: 'никогда',
+    reset: 'Сбросить состояние синхронизации',
   },
   guide: {
     title: 'Добро пожаловать в Smart Contacts',
