@@ -1,7 +1,7 @@
 // Lookup aggregation helpers for Smart Contacts.
 // Pure functions — no DB access, no side effects.
 // Computes group / tag / organization frequency counts from an in-memory contact list.
-// Only alive contacts (deletedAt is null or undefined) contribute to counts.
+// Only alive, non-hidden contacts (deletedAt is null/undefined AND hidden !== true) contribute to counts.
 // Organizations are sorted by mostRecentUpdate DESC, then name ASC, capped at 50.
 
 import type { Contact } from '../types'
@@ -10,6 +10,8 @@ export interface LookupCounts {
   groups: Array<{ id: string; name: string; count: number }>
   tags: Array<{ name: string; count: number }>
   organizations: Array<{ name: string; count: number; mostRecentUpdate: string }>
+  /** Count of contacts that are alive (deletedAt is null/undefined) AND hidden === true. */
+  hiddenCount: number
 }
 
 /**
@@ -30,10 +32,17 @@ export function deriveLookups(contacts: Contact[]): LookupCounts {
   const tagCount = new Map<string, number>()
   // Organization accumulator: name → { count, mostRecentUpdate }
   const orgMap = new Map<string, { count: number; mostRecentUpdate: string }>()
+  let hiddenCount = 0
 
   for (const c of contacts) {
-    // Skip soft-deleted contacts
+    // Skip soft-deleted contacts entirely
     if (c.deletedAt != null) continue
+
+    // Count alive+hidden contacts but exclude them from group/tag/org aggregation
+    if (c.hidden === true) {
+      hiddenCount += 1
+      continue
+    }
 
     for (const g of c.groups ?? []) {
       const id = g.id
@@ -86,5 +95,5 @@ export function deriveLookups(contacts: Contact[]): LookupCounts {
     )
     .slice(0, 50)
 
-  return { groups, tags, organizations }
+  return { groups, tags, organizations, hiddenCount }
 }

@@ -1,68 +1,19 @@
 /**
  * @file useFilteredContacts.ts
- * Pure React hook that applies ContactFilters to a contact list and returns the visible subset.
+ * Thin React hook that applies ContactFilters to a contact list and returns the visible subset.
  * Rules: no UI imports; only React, shared types, and filterTypes.
- * Search overrides all other filters (searches alive contacts only).
- * Scope/group/tag are applied in conjunction.
+ * All filter logic lives in shared/src/core/contactFilter.ts (applyContactFilters).
+ *
+ * Hidden-scope behaviour summary (enforced in applyContactFilters):
+ *  - scope='hidden' → only alive+hidden contacts; search also scans hidden-alive.
+ *  - scope='trash'  → deleted contacts regardless of hidden flag.
+ *  - any other scope → excludes hidden contacts; search excludes hidden too.
  */
 import { useMemo } from 'react'
 import type { Contact } from '@smart-contacts/shared'
-import { isBirthdayThisMonth } from '@smart-contacts/shared'
+import { applyContactFilters } from '@smart-contacts/shared'
 import type { ContactFilters } from './filterTypes'
 
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
-
 export function useFilteredContacts(contacts: Contact[], filters: ContactFilters): Contact[] {
-  return useMemo(() => {
-    // Search beats everything else — scans alive contacts only.
-    if (filters.search.trim()) {
-      const q = filters.search.trim().toLowerCase()
-      return contacts
-        .filter((c) => !c.deletedAt)
-        .filter((c) => {
-          const fields = [c.displayName, c.givenName, c.familyName, c.nickname]
-            .filter((s): s is string => !!s)
-            .join(' ')
-            .toLowerCase()
-          return fields.includes(q)
-        })
-    }
-
-    let pool = contacts
-
-    // Scope determines alive vs. deleted branch.
-    if (filters.scope === 'trash') {
-      pool = pool.filter((c) => !!c.deletedAt)
-    } else {
-      pool = pool.filter((c) => !c.deletedAt)
-
-      if (filters.scope === 'starred') {
-        pool = pool.filter((c) => (c.priority ?? 5) <= 2)
-      } else if (filters.scope === 'recent') {
-        const cutoff = Date.now() - SEVEN_DAYS_MS
-        pool = pool.filter(
-          (c) => c.lastContactedAt && new Date(c.lastContactedAt).getTime() >= cutoff,
-        )
-      } else if (filters.scope === 'birthdays') {
-        pool = pool.filter((c) =>
-          (c.events ?? []).some((e) => e.type === 'birthday' && isBirthdayThisMonth(e.date)),
-        )
-      }
-    }
-
-    // Group and tag are additional (intersect) filters.
-    if (filters.group) {
-      pool = pool.filter((c) => (c.groups ?? []).some((g) => g.id === filters.group))
-    }
-    if (filters.tag) {
-      pool = pool.filter((c) => (c.tags ?? []).includes(filters.tag!))
-    }
-    if (filters.organization) {
-      pool = pool.filter((c) =>
-        (c.organizations ?? []).some((o) => o.name === filters.organization),
-      )
-    }
-
-    return pool
-  }, [contacts, filters])
+  return useMemo(() => applyContactFilters(contacts, filters), [contacts, filters])
 }

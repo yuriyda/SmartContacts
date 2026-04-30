@@ -8,7 +8,7 @@
 /** Describes the active filter state for the contacts list. */
 export interface ContactFilters {
   /** Mutually exclusive scope selector (like radio buttons). */
-  scope: 'all' | 'starred' | 'recent' | 'birthdays' | 'trash'
+  scope: 'all' | 'starred' | 'recent' | 'birthdays' | 'trash' | 'hidden'
   /** Group id to further narrow scope, or null for no group filter. */
   group: string | null
   /** Tag name to further narrow scope, or null for no tag filter. */

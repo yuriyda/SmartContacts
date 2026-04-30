@@ -18,7 +18,7 @@ function makeContact(partial: Partial<Contact>): Contact {
 
 describe('deriveLookups', () => {
   test('empty list → empty result', () => {
-    expect(deriveLookups([])).toEqual({ groups: [], tags: [], organizations: [] })
+    expect(deriveLookups([])).toEqual({ groups: [], tags: [], organizations: [], hiddenCount: 0 })
   })
 
   test('one contact with two tags and one group → counts both = 1', () => {
@@ -166,5 +166,65 @@ describe('deriveLookups', () => {
     const { organizations } = deriveLookups([c])
     expect(organizations).toHaveLength(1)
     expect(organizations[0]?.name).toBe('Valid')
+  })
+
+  // ── Hidden contacts tests ────────────────────────────────────────────────────
+
+  test('hidden contact is excluded from tag/group/org counts', () => {
+    // A: alive, no flags, has tag 'x', group 'g1', org 'Acme'
+    const a = makeContact({
+      id: 'A',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      tags: ['x'],
+      groups: [{ id: 'g1', name: 'G1' }],
+      organizations: [{ name: 'Acme' }],
+    })
+    // B: alive, hidden, has tag 'x', group 'g1', org 'Acme'
+    const b = makeContact({
+      id: 'B',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      hidden: true,
+      tags: ['x'],
+      groups: [{ id: 'g1', name: 'G1' }],
+      organizations: [{ name: 'Acme' }],
+    })
+    // C: deleted AND hidden, has tag 'x', group 'g1', org 'Acme'
+    const c = makeContact({
+      id: 'C',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+      hidden: true,
+      deletedAt: '2026-01-03T00:00:00.000Z',
+      tags: ['x'],
+      groups: [{ id: 'g1', name: 'G1' }],
+      organizations: [{ name: 'Acme' }],
+    })
+
+    const result = deriveLookups([a, b, c])
+    // Only A counts — B excluded (hidden), C excluded (deleted)
+    expect(result.tags).toEqual([{ name: 'x', count: 1 }])
+    expect(result.groups).toEqual([{ id: 'g1', name: 'G1', count: 1 }])
+    expect(result.organizations[0]?.count).toBe(1)
+  })
+
+  test('hiddenCount counts alive-hidden contacts only', () => {
+    const a = makeContact({ id: 'A' })
+    const b = makeContact({ id: 'B', hidden: true })
+    const c = makeContact({ id: 'C', hidden: true, deletedAt: '2026-01-01T00:00:00.000Z' })
+    const result = deriveLookups([a, b, c])
+    expect(result.hiddenCount).toBe(1) // B only; C is deleted
+  })
+
+  test('hidden: false is treated same as no flag', () => {
+    const c = makeContact({ id: 'c1', hidden: false, tags: ['x'], groups: [{ id: 'g1' }] })
+    const result = deriveLookups([c])
+    expect(result.tags).toEqual([{ name: 'x', count: 1 }])
+    expect(result.groups).toEqual([{ id: 'g1', name: 'g1', count: 1 }])
+    expect(result.hiddenCount).toBe(0)
+  })
+
+  test('hiddenCount is 0 when all hidden contacts are deleted', () => {
+    const c = makeContact({ id: 'c1', hidden: true, deletedAt: '2026-01-01T00:00:00.000Z' })
+    const result = deriveLookups([c])
+    expect(result.hiddenCount).toBe(0)
   })
 })
