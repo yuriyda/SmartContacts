@@ -21,6 +21,7 @@ import { AppProvider, useApp } from './ui/AppContext'
 import { useDb } from './store/useDb'
 import { useContacts } from './store/useContacts'
 import { useNetworkData } from './store/useNetworkData'
+import { useInteractions } from './store/useInteractions'
 import { Sidebar } from './ui/Sidebar'
 import { MainList } from './ui/MainList'
 import { StatusBar } from './ui/StatusBar'
@@ -170,6 +171,13 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
   // ---------------------------------------------------------------------------
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  // Per-contact interaction journal (P8.B.1)
+  const {
+    interactions: contactInteractions,
+    upsert: upsertInteraction,
+    softDelete: softDeleteInteraction,
+  } = useInteractions(dbState.interactionsRepo, selectedId)
   const [filters, setFilters] = useState<ContactFilters>(DEFAULT_FILTERS)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [editing, setEditing] = useState<{ open: boolean; contact: Contact | null }>({
@@ -623,6 +631,9 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
               onRestore={() => selectedId && void restore(selectedId)}
               onSelectContact={setSelectedId}
               width={detailWidth}
+              interactions={contactInteractions}
+              onInteractionUpsert={upsertInteraction}
+              onInteractionSoftDelete={softDeleteInteraction}
             />
           </>
         ) : (

@@ -81,6 +81,7 @@ export const ru: Dict = {
     occupation: 'Должность',
     user_defined: 'Google custom fields',
     social: 'Соцсети',
+    interactions: 'Взаимодействия',
   },
   empty: {
     no_contacts: 'Контактов пока нет',
@@ -108,6 +109,7 @@ export const ru: Dict = {
     unprotect: 'Снять защиту',
     hide: 'Скрыть',
     unhide: 'Показать',
+    log_interaction: 'Записать взаимодействие',
   },
   prompt: {
     filter_name: 'Название фильтра',
@@ -125,6 +127,9 @@ export const ru: Dict = {
     hide_body: 'Скрыть «{name}»? Контакт не будет показываться в списках по умолчанию.',
     protect_delete_body: 'Удалить защищённый контакт «{name}»? Контакт будет перемещён в корзину.',
     protect_edit_summary: 'Изменения в защищённом контакте: {n} поле(й). Сохранить?',
+    delete_interaction_title: 'Удалить это взаимодействие?',
+    delete_interaction_body:
+      'Запись будет помечена удалённой; может вернуться после синхронизации.',
   },
   demo: {
     load_en: 'Загрузить демо (англ.)',
@@ -255,5 +260,16 @@ export const ru: Dict = {
   validation: {
     invalid_email: 'Неверный email',
     invalid_phone: 'Неверный телефон',
+  },
+  interaction_channel: {
+    call: 'Звонок',
+    meet: 'Встреча',
+    message: 'Сообщение',
+    email: 'Email',
+    social: 'Соцсеть',
+    other: 'Другое',
+  },
+  interaction: {
+    note_placeholder: 'О чём общались? (необязательно, поддерживается Markdown)',
   },
 }

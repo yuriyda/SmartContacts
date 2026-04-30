@@ -8,8 +8,8 @@
  * so that onClick handlers can be attached correctly.
  */
 import { useState, type ReactNode } from 'react'
-import type { Contact, CustomFieldDef } from '@smart-contacts/shared'
-import { computeDisplayName, fmtDate } from '@smart-contacts/shared'
+import type { Contact, CustomFieldDef, Interaction, Ulid } from '@smart-contacts/shared'
+import { computeDisplayName, fmtDate, timeAgo, ulid } from '@smart-contacts/shared'
 import { useApp } from './AppContext'
 import { ContactAvatar } from './ContactAvatar'
 import { TagPill, GroupBadge } from './badges'
@@ -33,6 +33,7 @@ import {
   Lock,
   EyeOff,
 } from './icons'
+import { InteractionComposer } from './InteractionComposer'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,6 +52,10 @@ export interface ContactDetailProps {
   onSelectContact?: (id: string) => void
   /** Panel width in px; driven by parent ResizeHandle state. */
   width?: number
+  /** Alive interactions for the displayed contact, sorted by at DESC. */
+  interactions?: Interaction[]
+  onInteractionUpsert?: (i: Interaction) => Promise<void>
+  onInteractionSoftDelete?: (id: Ulid) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +230,132 @@ function LVRow({ label, children }: { label: string; children: ReactNode }) {
 }
 
 // ---------------------------------------------------------------------------
+// InteractionRow — single entry in the interactions journal
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders one interaction entry: channel label + relative timestamp + first 100 chars of note.
+ * Click to expand to full markdown + Edit / Delete actions.
+ */
+function InteractionRow({
+  interaction,
+  onEdit,
+  onDelete,
+}: {
+  interaction: Interaction
+  onEdit: (edited: Interaction) => void
+  onDelete: () => void
+}) {
+  const { TC, t, locale } = useApp()
+  const [expanded, setExpanded] = useState(false)
+  const [editing, setEditing] = useState(false)
+
+  const channelLabel = t(`interaction_channel.${interaction.channel}`)
+  const relTime = timeAgo(interaction.at, locale)
+  const preview =
+    interaction.noteMd && interaction.noteMd.length > 100
+      ? interaction.noteMd.slice(0, 100) + '…'
+      : (interaction.noteMd ?? '')
+
+  if (editing) {
+    return (
+      <InteractionComposer
+        initial={{
+          channel: interaction.channel,
+          at: interaction.at,
+          ...(interaction.noteMd !== undefined ? { noteMd: interaction.noteMd } : {}),
+        }}
+        onSave={(draft) => {
+          const now = new Date().toISOString()
+          const edited: Interaction = {
+            ...interaction,
+            channel: draft.channel,
+            at: draft.at,
+            updatedAt: now,
+          }
+          if (draft.noteMd) edited.noteMd = draft.noteMd
+          else delete edited.noteMd
+          onEdit(edited)
+          setEditing(false)
+        }}
+        onCancel={() => setEditing(false)}
+      />
+    )
+  }
+
+  return (
+    <div
+      className={`rounded p-2 ${TC.elevated} cursor-pointer`}
+      onClick={() => setExpanded((e) => !e)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') setExpanded((prev) => !prev)
+      }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`text-xs font-medium ${TC.text} flex-shrink-0`}>{channelLabel}</span>
+          <span className={`text-xs ${TC.textMuted} flex-shrink-0`}>{relTime}</span>
+          {!expanded && preview && (
+            <span className={`text-xs ${TC.textSec} truncate`}>{preview}</span>
+          )}
+        </div>
+        <ChevronRight
+          size={12}
+          className={`${TC.textMuted} flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+        />
+      </div>
+
+      {expanded && (
+        <div
+          className="mt-2 space-y-2"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {interaction.noteMd && (
+            <p className={`text-sm ${TC.text} whitespace-pre-wrap break-words`}>
+              {interaction.noteMd}
+            </p>
+          )}
+          <p className={`text-xs ${TC.textMuted}`}>{new Date(interaction.at).toLocaleString()}</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setEditing(true)
+              }}
+              className={`text-xs px-2 py-0.5 rounded ${TC.elevated} ${TC.textSec} hover:opacity-80`}
+            >
+              {t('actions.edit')}
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (
+                  window.confirm(
+                    t('confirm.delete_interaction_title') +
+                      '\n' +
+                      t('confirm.delete_interaction_body'),
+                  )
+                ) {
+                  onDelete()
+                }
+              }}
+              className="text-xs px-2 py-0.5 rounded text-red-400 hover:text-red-300"
+            >
+              {t('actions.delete')}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -240,8 +371,12 @@ export function ContactDetail({
   onRestore,
   onSelectContact,
   width = 420,
+  interactions = [],
+  onInteractionUpsert,
+  onInteractionSoftDelete,
 }: ContactDetailProps) {
   const { TC, t, locale } = useApp()
+  const [composerOpen, setComposerOpen] = useState(false)
 
   // ── Empty state ──
   if (contact === null) {
@@ -565,6 +700,51 @@ export function ContactDetail({
           ))}
         </DetailSection>
       )}
+
+      {/* ── Interactions ── */}
+      <DetailSection id="interactions" label={t('field.interactions')}>
+        <div className="space-y-2">
+          {interactions.map((i) => (
+            <InteractionRow
+              key={i.id}
+              interaction={i}
+              onEdit={(edited) => void onInteractionUpsert?.(edited)}
+              onDelete={() => void onInteractionSoftDelete?.(i.id)}
+            />
+          ))}
+          {!composerOpen && (
+            <button
+              type="button"
+              onClick={() => setComposerOpen(true)}
+              className="text-sm text-sky-400 hover:text-sky-300"
+            >
+              + {t('actions.log_interaction')}
+            </button>
+          )}
+          {composerOpen && (
+            <InteractionComposer
+              initial={{ channel: 'message', at: new Date().toISOString().slice(0, 16) }}
+              onSave={(draft) => {
+                const now = new Date().toISOString()
+                const newInteraction: Interaction = {
+                  id: ulid(),
+                  contactId: contact.id,
+                  channel: draft.channel,
+                  at: draft.at,
+                  createdAt: now,
+                  updatedAt: now,
+                  lamportTs: 0, // repo.upsert overwrites this with bumped value
+                  deviceId: '', // same — repo.upsert fills in real deviceId
+                }
+                if (draft.noteMd) newInteraction.noteMd = draft.noteMd
+                void onInteractionUpsert?.(newInteraction)
+                setComposerOpen(false)
+              }}
+              onCancel={() => setComposerOpen(false)}
+            />
+          )}
+        </div>
+      </DetailSection>
 
       {/* ── Tags ── */}
       {(contact.tags?.length ?? 0) > 0 && (

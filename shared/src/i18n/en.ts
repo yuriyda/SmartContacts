@@ -79,6 +79,7 @@ export const en = {
     occupation: 'Occupation',
     user_defined: 'Google custom fields',
     social: 'Social',
+    interactions: 'Interactions',
   },
   empty: {
     no_contacts: 'No contacts yet',
@@ -106,6 +107,7 @@ export const en = {
     unprotect: 'Remove protection',
     hide: 'Hide',
     unhide: 'Unhide',
+    log_interaction: 'Log interaction',
   },
   prompt: {
     filter_name: 'Filter name',
@@ -124,6 +126,8 @@ export const en = {
     hide_body: 'Hide {name}? It will not appear in default lists.',
     protect_delete_body: 'Delete protected contact {name}? It will be moved to Trash.',
     protect_edit_summary: '{n} field(s) will change on a protected contact. Save?',
+    delete_interaction_title: 'Delete this interaction?',
+    delete_interaction_body: 'The entry will be soft-deleted and can re-appear after sync.',
   },
   demo: {
     load_en: 'Load demo data (English)',
@@ -253,6 +257,17 @@ export const en = {
   validation: {
     invalid_email: 'Invalid email',
     invalid_phone: 'Invalid phone',
+  },
+  interaction_channel: {
+    call: 'Call',
+    meet: 'Meeting',
+    message: 'Message',
+    email: 'Email',
+    social: 'Social',
+    other: 'Other',
+  },
+  interaction: {
+    note_placeholder: 'What did you talk about? (optional, Markdown supported)',
   },
 }
 export type Dict = typeof en
