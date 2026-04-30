@@ -21,3 +21,6 @@ memory.md
 *.tsbuildinfo
 *.timestamp-*.mjs
 dev-dist/
+
+# Planning artifacts live in /workspace/docs/, not in the repo
+docs/
