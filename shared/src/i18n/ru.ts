@@ -16,7 +16,7 @@ export const ru: Dict = {
     loading: 'Загрузка…',
   },
   nav: {
-    add_contact: '+ Добавить',
+    add_contact: 'Добавить',
     search_placeholder: 'Поиск…',
     settings: 'Настройки',
     toggle_sidebar: 'Сайдбар',

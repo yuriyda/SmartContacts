@@ -14,7 +14,7 @@ export const en = {
     loading: 'Loading…',
   },
   nav: {
-    add_contact: '+ Add',
+    add_contact: 'Add',
     search_placeholder: 'Search…',
     settings: 'Settings',
     toggle_sidebar: 'Toggle sidebar',
