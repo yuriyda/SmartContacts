@@ -64,6 +64,36 @@ const v1: string[] = [
      device_id TEXT, lamport_ts INTEGER, data TEXT,
      created_at TEXT NOT NULL
    )`,
+  `CREATE TABLE IF NOT EXISTS interactions (
+     id          TEXT PRIMARY KEY,
+     contact_id  TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+     at          TEXT NOT NULL,
+     channel     TEXT NOT NULL,
+     note_md     TEXT,
+     created_at  TEXT NOT NULL,
+     updated_at  TEXT NOT NULL,
+     deleted_at  TEXT,
+     lamport_ts  INTEGER NOT NULL,
+     device_id   TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS interactions_contact ON interactions(contact_id, at)`,
+  `CREATE INDEX IF NOT EXISTS interactions_did_lts ON interactions(device_id, lamport_ts)`,
+  `CREATE TABLE IF NOT EXISTS contact_tasks (
+     id          TEXT PRIMARY KEY,
+     contact_id  TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+     text        TEXT NOT NULL,
+     due_at      TEXT,
+     priority    INTEGER,
+     done_at     TEXT,
+     created_at  TEXT NOT NULL,
+     updated_at  TEXT NOT NULL,
+     deleted_at  TEXT,
+     lamport_ts  INTEGER NOT NULL,
+     device_id   TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS contact_tasks_contact ON contact_tasks(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_tasks_due     ON contact_tasks(due_at) WHERE done_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS contact_tasks_did_lts ON contact_tasks(device_id, lamport_ts)`,
 ]
 
 export async function applyMigrations(db: DbAdapter): Promise<void> {

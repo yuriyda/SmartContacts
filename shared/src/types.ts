@@ -179,3 +179,40 @@ export interface SyncRequest {
 
 /** Discriminated union of sync wire messages. Narrow by `msg.type`. */
 export type SyncMessage = SyncPackage | SyncRequest
+
+// ---------------------------------------------------------------------------
+// Interaction types (P8.A.1)
+// ---------------------------------------------------------------------------
+
+export type InteractionChannel = 'call' | 'meet' | 'message' | 'email' | 'social' | 'other'
+
+export interface Interaction {
+  id: Ulid
+  contactId: Ulid
+  at: string // ISO timestamp
+  channel: InteractionChannel
+  noteMd?: string
+  createdAt: string
+  updatedAt: string
+  deletedAt?: string // tombstone
+  lamportTs: number
+  deviceId: string
+}
+
+// ---------------------------------------------------------------------------
+// ContactTask types (P8.A.1)
+// ---------------------------------------------------------------------------
+
+export interface ContactTask {
+  id: Ulid
+  contactId: Ulid
+  text: string
+  dueAt?: string // ISO date or undefined
+  priority?: 1 | 2 | 3 | 4 | 5
+  doneAt?: string // ISO timestamp; undefined while open
+  createdAt: string
+  updatedAt: string
+  deletedAt?: string // tombstone
+  lamportTs: number
+  deviceId: string
+}
