@@ -15,6 +15,8 @@ import {
   computeTodayItems,
   computeStaleItems,
   computeWeakeningItems,
+  computeUpcomingItems,
+  computeOpenTaskItems,
   DEFAULT_STALE_THRESHOLDS,
 } from './networkWidgets'
 
@@ -241,5 +243,144 @@ describe('computeWeakeningItems', () => {
     )
     const items = computeWeakeningItems(contacts, new Map(), NOW, 5)
     expect(items).toHaveLength(5)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeUpcomingItems
+// ---------------------------------------------------------------------------
+
+describe('computeUpcomingItems', () => {
+  const c = makeContact({ id: 'c1' })
+
+  test('task due tomorrow is included with daysUntilDue === 1', () => {
+    const tomorrow = new Date(NOW.getTime() + 1 * 86400000).toISOString().slice(0, 10)
+    const t = makeTask({ contactId: 'c1', dueAt: tomorrow })
+    const items = computeUpcomingItems([t], [c], NOW)
+    expect(items).toHaveLength(1)
+    expect(items[0]!.daysUntilDue).toBe(1)
+  })
+
+  test('task due today is NOT included (handled by Today widget)', () => {
+    const t = makeTask({ contactId: 'c1', dueAt: TODAY_ISO })
+    const items = computeUpcomingItems([t], [c], NOW)
+    expect(items).toHaveLength(0)
+  })
+
+  test('task due exactly 7 days from now is included', () => {
+    const sevenDays = new Date(NOW.getTime() + 7 * 86400000).toISOString().slice(0, 10)
+    const t = makeTask({ contactId: 'c1', dueAt: sevenDays })
+    const items = computeUpcomingItems([t], [c], NOW)
+    expect(items).toHaveLength(1)
+    expect(items[0]!.daysUntilDue).toBe(7)
+  })
+
+  test('task due 8 days from now is NOT included', () => {
+    const eightDays = new Date(NOW.getTime() + 8 * 86400000).toISOString().slice(0, 10)
+    const t = makeTask({ contactId: 'c1', dueAt: eightDays })
+    const items = computeUpcomingItems([t], [c], NOW)
+    expect(items).toHaveLength(0)
+  })
+
+  test('task with no dueAt is excluded', () => {
+    const t = makeTask({ contactId: 'c1' })
+    const items = computeUpcomingItems([t], [c], NOW)
+    expect(items).toHaveLength(0)
+  })
+
+  test('done task with future dueAt is excluded', () => {
+    const tomorrow = new Date(NOW.getTime() + 1 * 86400000).toISOString().slice(0, 10)
+    const t = makeTask({ contactId: 'c1', dueAt: tomorrow, doneAt: TODAY_ISO })
+    const items = computeUpcomingItems([t], [c], NOW)
+    expect(items).toHaveLength(0)
+  })
+
+  test('task for soft-deleted contact is excluded', () => {
+    const deletedContact = makeContact({ id: 'c2', deletedAt: '2026-01-01T00:00:00Z' })
+    const tomorrow = new Date(NOW.getTime() + 1 * 86400000).toISOString().slice(0, 10)
+    const t = makeTask({ contactId: 'c2', dueAt: tomorrow })
+    const items = computeUpcomingItems([t], [deletedContact], NOW)
+    expect(items).toHaveLength(0)
+  })
+
+  test('sorted by dueAt ASC', () => {
+    const d2 = new Date(NOW.getTime() + 2 * 86400000).toISOString().slice(0, 10)
+    const d5 = new Date(NOW.getTime() + 5 * 86400000).toISOString().slice(0, 10)
+    const t1 = makeTask({ id: 't1', contactId: 'c1', dueAt: d5 })
+    const t2 = makeTask({ id: 't2', contactId: 'c1', dueAt: d2 })
+    const items = computeUpcomingItems([t1, t2], [c], NOW)
+    expect(items[0]!.task.id).toBe('t2') // earlier due date first
+    expect(items[1]!.task.id).toBe('t1')
+  })
+
+  test('cap limits result count', () => {
+    const tasks = Array.from({ length: 10 }, (_, i) => {
+      const due = new Date(NOW.getTime() + (i + 1) * 86400000).toISOString().slice(0, 10)
+      return makeTask({ id: `t${i}`, contactId: 'c1', dueAt: due })
+    })
+    const items = computeUpcomingItems(tasks, [c], NOW, 3)
+    expect(items).toHaveLength(3)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeOpenTaskItems
+// ---------------------------------------------------------------------------
+
+describe('computeOpenTaskItems', () => {
+  const c1 = makeContact({ id: 'c1' })
+  const c2 = makeContact({ id: 'c2' })
+
+  test('all open tasks returned', () => {
+    const t1 = makeTask({ id: 't1', contactId: 'c1', priority: 1 })
+    const t2 = makeTask({ id: 't2', contactId: 'c2', priority: 2 })
+    const items = computeOpenTaskItems([t1, t2], [c1, c2])
+    expect(items).toHaveLength(2)
+  })
+
+  test('done task is excluded', () => {
+    const t = makeTask({ id: 't1', contactId: 'c1', doneAt: TODAY_ISO })
+    const items = computeOpenTaskItems([t], [c1])
+    expect(items).toHaveLength(0)
+  })
+
+  test('deleted task is excluded', () => {
+    const t = makeTask({ id: 't1', contactId: 'c1', deletedAt: TODAY_ISO })
+    const items = computeOpenTaskItems([t], [c1])
+    expect(items).toHaveLength(0)
+  })
+
+  test('task for soft-deleted contact is excluded', () => {
+    const deleted = makeContact({ id: 'cx', deletedAt: '2026-01-01T00:00:00Z' })
+    const t = makeTask({ id: 't1', contactId: 'cx' })
+    const items = computeOpenTaskItems([t], [deleted])
+    expect(items).toHaveLength(0)
+  })
+
+  test('sorted by priority ASC then dueAt ASC', () => {
+    const d3 = new Date(NOW.getTime() + 3 * 86400000).toISOString().slice(0, 10)
+    const d1 = new Date(NOW.getTime() + 1 * 86400000).toISOString().slice(0, 10)
+    const ta = makeTask({ id: 'ta', contactId: 'c1', priority: 2, dueAt: d3 })
+    const tb = makeTask({ id: 'tb', contactId: 'c1', priority: 1, dueAt: d1 })
+    const tc = makeTask({ id: 'tc', contactId: 'c1', priority: 2, dueAt: d1 })
+    const items = computeOpenTaskItems([ta, tb, tc], [c1])
+    expect(items[0]!.task.id).toBe('tb') // priority 1 first
+    expect(items[1]!.task.id).toBe('tc') // priority 2, earlier due
+    expect(items[2]!.task.id).toBe('ta') // priority 2, later due
+  })
+
+  test('no-priority tasks sorted last', () => {
+    const ta = makeTask({ id: 'ta', contactId: 'c1', priority: 1 })
+    const tb = makeTask({ id: 'tb', contactId: 'c1' }) // no priority
+    const items = computeOpenTaskItems([tb, ta], [c1])
+    expect(items[0]!.task.id).toBe('ta') // priority 1 before no-priority
+    expect(items[1]!.task.id).toBe('tb')
+  })
+
+  test('cap at 20 default', () => {
+    const contacts = [makeContact({ id: 'cx' })]
+    const tasks = Array.from({ length: 30 }, (_, i) => makeTask({ id: `t${i}`, contactId: 'cx' }))
+    const items = computeOpenTaskItems(tasks, contacts)
+    expect(items).toHaveLength(20)
   })
 })

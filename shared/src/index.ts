@@ -29,10 +29,14 @@ export {
   computeTodayItems,
   computeStaleItems,
   computeWeakeningItems,
+  computeUpcomingItems,
+  computeOpenTaskItems,
   DEFAULT_STALE_THRESHOLDS,
   type TodayItem,
   type StaleItem,
   type WeakeningItem,
+  type UpcomingItem,
+  type OpenTaskItem,
 } from './core/networkWidgets'
 export * from './parse/quickEntryContacts'
 export * from './sync/sync'

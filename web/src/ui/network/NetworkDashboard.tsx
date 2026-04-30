@@ -8,11 +8,19 @@
  */
 import { useMemo } from 'react'
 import type { Contact, Interaction, ContactTask } from '@smart-contacts/shared'
-import { computeTodayItems, computeStaleItems, computeWeakeningItems } from '@smart-contacts/shared'
+import {
+  computeTodayItems,
+  computeStaleItems,
+  computeWeakeningItems,
+  computeUpcomingItems,
+  computeOpenTaskItems,
+} from '@smart-contacts/shared'
 import type { StaleThresholds } from '../../store/networkSettings'
 import { TodayWidget } from './widgets/TodayWidget'
 import { StaleWidget } from './widgets/StaleWidget'
 import { WeakeningWidget } from './widgets/WeakeningWidget'
+import { UpcomingWidget } from './widgets/UpcomingWidget'
+import { OpenTasksWidget } from './widgets/OpenTasksWidget'
 
 interface Props {
   contacts: Contact[] // already filtered by sidebar (hidden excluded by default)
@@ -54,12 +62,22 @@ export function NetworkDashboard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contacts, recentInteractions])
 
+  const upcoming = useMemo(
+    () => computeUpcomingItems(openTasks, contacts, now),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [openTasks, contacts],
+  )
+
+  const openItems = useMemo(() => computeOpenTaskItems(openTasks, contacts), [openTasks, contacts])
+
   return (
     <div className="flex-1 overflow-auto p-6">
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         <TodayWidget items={today} contacts={contacts} onOpenContact={onOpenContact} />
         <StaleWidget items={stale} onOpenContact={onOpenContact} />
         <WeakeningWidget items={weakening} onOpenContact={onOpenContact} />
+        <UpcomingWidget items={upcoming} contacts={contacts} onOpenContact={onOpenContact} />
+        <OpenTasksWidget items={openItems} contacts={contacts} onOpenContact={onOpenContact} />
       </div>
     </div>
   )

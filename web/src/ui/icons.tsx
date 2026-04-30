@@ -45,6 +45,7 @@ export {
   EyeOff,
   Lock,
   ListChecks,
+  CalendarClock,
 } from 'lucide-react'
 
 // Two-color swatch indicator for theme picker.

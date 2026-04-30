@@ -27,10 +27,14 @@ export const en = {
     today: 'Today',
     stale: 'Stale',
     weakening: 'Weakening',
+    upcoming: 'Upcoming',
+    open_tasks: 'Open tasks',
     empty: {
       today: 'No reminders, birthdays, or tasks today.',
       stale: 'All contacts are up-to-date.',
       weakening: 'No weakening relationships detected.',
+      upcoming: 'No upcoming tasks in the next 7 days.',
+      open_tasks: 'No open tasks.',
     },
   },
   sidebar: {
