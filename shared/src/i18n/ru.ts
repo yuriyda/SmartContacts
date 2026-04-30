@@ -90,6 +90,10 @@ export const ru: Dict = {
     added_to_group: 'Добавлено в {name}',
     added_to_tag: 'Тег #{name}',
     added_to_organization: 'Связано с {name}',
+    protect: 'Защитить',
+    unprotect: 'Снять защиту',
+    hide: 'Скрыть',
+    unhide: 'Показать',
   },
   prompt: {
     filter_name: 'Название фильтра',
@@ -103,6 +107,8 @@ export const ru: Dict = {
     replace_body: 'Все текущие контакты и свои поля будут удалены перед импортом.',
     reset_title: 'Сбросить все данные?',
     reset_body: 'Будут удалены контакты, свои поля и аватары. Отмена невозможна.',
+    unprotect_body: 'Снять защиту с «{name}»?',
+    hide_body: 'Скрыть «{name}»? Контакт не будет показываться в списках по умолчанию.',
   },
   demo: {
     load_en: 'Загрузить демо (англ.)',

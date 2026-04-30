@@ -88,6 +88,10 @@ export const en = {
     added_to_group: 'Added to {name}',
     added_to_tag: 'Tagged #{name}',
     added_to_organization: 'Linked to {name}',
+    protect: 'Protect',
+    unprotect: 'Remove protection',
+    hide: 'Hide',
+    unhide: 'Unhide',
   },
   prompt: {
     filter_name: 'Filter name',
@@ -102,6 +106,8 @@ export const en = {
       'All current contacts and custom fields will be deleted before importing the backup.',
     reset_title: 'Reset all data?',
     reset_body: 'This deletes contacts, custom fields, and avatars. Cannot be undone.',
+    unprotect_body: 'Remove protection from {name}?',
+    hide_body: 'Hide {name}? It will not appear in default lists.',
   },
   demo: {
     load_en: 'Load demo data (English)',

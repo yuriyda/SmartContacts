@@ -13,6 +13,7 @@ import { useApp } from './AppContext'
 import { PriorityBadge, TagPill } from './badges'
 import { ContactAvatar } from './ContactAvatar'
 import { DND_MIME, isTouchDevice } from './dnd'
+import { Lock, EyeOff } from './icons'
 
 interface ContactRowProps {
   contact: Contact
@@ -66,7 +67,15 @@ export function ContactRow({
       <ContactAvatar id={contact.id} name={name} size={avatarSize} />
 
       <div className="flex-1 min-w-0">
-        <div className={`truncate text-sm ${selected ? 'text-sky-100' : TC.text}`}>{name}</div>
+        <div className={`truncate text-sm ${selected ? 'text-sky-100' : TC.text}`}>
+          {name}
+          {contact.protected && (
+            <Lock size={11} className="inline-block ml-1 text-sky-400" aria-label="Protected" />
+          )}
+          {contact.hidden && (
+            <EyeOff size={11} className="inline-block ml-1 text-sky-400" aria-label="Hidden" />
+          )}
+        </div>
         {density !== 'compact' && (
           <div className={`truncate text-[11px] ${TC.textMuted}`}>
             {primaryPhone?.value ?? primaryEmail?.value ?? '\u00a0'}

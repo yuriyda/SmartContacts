@@ -30,6 +30,8 @@ import {
   RotateCcw,
   Trash2,
   Clock,
+  Lock,
+  EyeOff,
 } from './icons'
 
 // ---------------------------------------------------------------------------
@@ -41,6 +43,8 @@ export interface ContactDetailProps {
   defs: CustomFieldDef[]
   allContacts: Contact[]
   onEdit?: () => void
+  onToggleProtect?: (c: Contact) => void
+  onToggleHide?: (c: Contact) => void
   onTouch?: () => void
   onDelete?: () => void
   onRestore?: () => void
@@ -229,6 +233,8 @@ export function ContactDetail({
   defs,
   allContacts,
   onEdit,
+  onToggleProtect,
+  onToggleHide,
   onTouch,
   onDelete,
   onRestore,
@@ -336,6 +342,30 @@ export function ContactDetail({
               >
                 <Edit3 size={13} />
                 {t('actions.edit')}
+              </button>
+              <button
+                onClick={() => onToggleProtect?.(contact)}
+                title={t(contact.protected ? 'actions.unprotect' : 'actions.protect')}
+                className={[
+                  'flex items-center justify-center px-2 py-1.5 rounded text-sm font-medium transition-colors',
+                  contact.protected
+                    ? 'bg-sky-400/10 text-sky-400'
+                    : `${TC.elevated} ${TC.textMuted} hover:${TC.text} hover:opacity-80`,
+                ].join(' ')}
+              >
+                <Lock size={14} />
+              </button>
+              <button
+                onClick={() => onToggleHide?.(contact)}
+                title={t(contact.hidden ? 'actions.unhide' : 'actions.hide')}
+                className={[
+                  'flex items-center justify-center px-2 py-1.5 rounded text-sm font-medium transition-colors',
+                  contact.hidden
+                    ? 'bg-sky-400/10 text-sky-400'
+                    : `${TC.elevated} ${TC.textMuted} hover:${TC.text} hover:opacity-80`,
+                ].join(' ')}
+              >
+                <EyeOff size={14} />
               </button>
               <button
                 onClick={onTouch}

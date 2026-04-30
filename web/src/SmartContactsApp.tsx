@@ -395,6 +395,30 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     [softDelete, push, t, restore],
   )
 
+  const onToggleProtect = useCallback(
+    async (c: Contact) => {
+      // No confirm to PROTECT (low-stakes). Confirm to UNPROTECT.
+      if (c.protected) {
+        const ok = window.confirm(t('confirm.unprotect_body', { name: c.displayName ?? '' }))
+        if (!ok) return
+      }
+      await upsert({ ...c, protected: !c.protected })
+    },
+    [upsert, t],
+  )
+
+  const onToggleHide = useCallback(
+    async (c: Contact) => {
+      // Confirm to HIDE; no confirm to UNHIDE.
+      if (!c.hidden) {
+        const ok = window.confirm(t('confirm.hide_body', { name: c.displayName ?? '' }))
+        if (!ok) return
+      }
+      await upsert({ ...c, hidden: !c.hidden })
+    },
+    [upsert, t],
+  )
+
   // j/k navigation through filtered list
   const navigate = useCallback(
     (delta: 1 | -1) => {
@@ -539,6 +563,8 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
           defs={defs}
           allContacts={contacts}
           onEdit={handleEdit}
+          onToggleProtect={onToggleProtect}
+          onToggleHide={onToggleHide}
           onTouch={() => selectedId && void touch(selectedId)}
           onDelete={() => selectedId && void handleSoftDelete(selectedId)}
           onRestore={() => selectedId && void restore(selectedId)}
