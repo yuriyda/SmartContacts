@@ -8,7 +8,13 @@
  * so that onClick handlers can be attached correctly.
  */
 import { useState, type ReactNode } from 'react'
-import type { Contact, CustomFieldDef, Interaction, Ulid } from '@smart-contacts/shared'
+import type {
+  Contact,
+  ContactTask,
+  CustomFieldDef,
+  Interaction,
+  Ulid,
+} from '@smart-contacts/shared'
 import { computeDisplayName, fmtDate, timeAgo, ulid } from '@smart-contacts/shared'
 import { useApp } from './AppContext'
 import { ContactAvatar } from './ContactAvatar'
@@ -34,6 +40,7 @@ import {
   EyeOff,
 } from './icons'
 import { InteractionComposer } from './InteractionComposer'
+import { TaskComposer } from './TaskComposer'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,6 +63,12 @@ export interface ContactDetailProps {
   interactions?: Interaction[]
   onInteractionUpsert?: (i: Interaction) => Promise<void>
   onInteractionSoftDelete?: (id: Ulid) => Promise<void>
+  /** Alive tasks for the displayed contact (open first, then done). */
+  tasks?: ContactTask[]
+  onTaskUpsert?: (t: ContactTask) => Promise<void>
+  onTaskMarkDone?: (id: string, doneAt: string) => Promise<void>
+  onTaskReopen?: (id: string) => Promise<void>
+  onTaskSoftDelete?: (id: string) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -356,6 +369,141 @@ function InteractionRow({
 }
 
 // ---------------------------------------------------------------------------
+// TaskRow — single entry in the per-contact task list
+// ---------------------------------------------------------------------------
+
+/** Priority dot color for task priority levels. */
+function priorityColor(p: number): string {
+  if (p <= 1) return 'bg-red-500'
+  if (p <= 2) return 'bg-orange-400'
+  if (p <= 3) return 'bg-yellow-400'
+  if (p <= 4) return 'bg-blue-400'
+  return 'bg-gray-400'
+}
+
+/**
+ * Renders one task row: checkbox + text + optional due-date pill + optional priority dot.
+ * Click anywhere on the collapsed row to expand for edit / delete actions.
+ */
+function TaskRow({
+  task,
+  onToggleDone,
+  onEdit,
+  onDelete,
+}: {
+  task: ContactTask
+  onToggleDone: () => void
+  onEdit: (draft: { text: string; dueAt?: string; priority?: 1 | 2 | 3 | 4 | 5 }) => void
+  onDelete: () => void
+}) {
+  const { TC, t } = useApp()
+  const [expanded, setExpanded] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const done = !!task.doneAt
+
+  if (editing) {
+    return (
+      <TaskComposer
+        initial={{
+          text: task.text,
+          ...(task.dueAt !== undefined ? { dueAt: task.dueAt } : {}),
+          ...(task.priority !== undefined ? { priority: task.priority } : {}),
+        }}
+        onSave={(draft) => {
+          onEdit(draft)
+          setEditing(false)
+        }}
+        onCancel={() => setEditing(false)}
+      />
+    )
+  }
+
+  return (
+    <div
+      className={`rounded p-2 ${TC.elevated} cursor-pointer`}
+      onClick={() => setExpanded((e) => !e)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') setExpanded((prev) => !prev)
+      }}
+    >
+      {/* Collapsed row */}
+      <div className="flex items-center gap-2">
+        {/* Checkbox */}
+        <input
+          type="checkbox"
+          checked={done}
+          onChange={(e) => {
+            e.stopPropagation()
+            onToggleDone()
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="flex-shrink-0 accent-sky-500 cursor-pointer"
+        />
+        {/* Text */}
+        <span
+          className={`text-sm flex-1 min-w-0 truncate ${done ? `line-through ${TC.textMuted}` : TC.text}`}
+        >
+          {task.text}
+        </span>
+        {/* Due date pill */}
+        {task.dueAt && (
+          <span
+            className={`text-xs px-1.5 py-0.5 rounded ${TC.elevated} ${TC.textMuted} flex-shrink-0`}
+          >
+            {t('task.due_label')} {task.dueAt}
+          </span>
+        )}
+        {/* Priority dot */}
+        {task.priority !== undefined && (
+          <span
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${priorityColor(task.priority)}`}
+            title={`P${task.priority}`}
+          />
+        )}
+        <ChevronRight
+          size={12}
+          className={`${TC.textMuted} flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+        />
+      </div>
+
+      {/* Expanded: edit + delete */}
+      {expanded && (
+        <div
+          className="mt-2 flex gap-2"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setEditing(true)
+            }}
+            className={`text-xs px-2 py-0.5 rounded ${TC.elevated} ${TC.textSec} hover:opacity-80`}
+          >
+            {t('actions.edit')}
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (window.confirm(t('confirm.delete_task_title'))) {
+                onDelete()
+              }
+            }}
+            className="text-xs px-2 py-0.5 rounded text-red-400 hover:text-red-300"
+          >
+            {t('actions.delete')}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -374,9 +522,19 @@ export function ContactDetail({
   interactions = [],
   onInteractionUpsert,
   onInteractionSoftDelete,
+  tasks = [],
+  onTaskUpsert,
+  onTaskMarkDone,
+  onTaskReopen,
+  onTaskSoftDelete,
 }: ContactDetailProps) {
   const { TC, t, locale } = useApp()
   const [composerOpen, setComposerOpen] = useState(false)
+  const [taskComposerOpen, setTaskComposerOpen] = useState(false)
+  const [showDoneTasks, setShowDoneTasks] = useState(false)
+
+  const openTasks = tasks.filter((tk) => !tk.doneAt)
+  const doneTasks = tasks.filter((tk) => !!tk.doneAt)
 
   // ── Empty state ──
   if (contact === null) {
@@ -741,6 +899,95 @@ export function ContactDetail({
                 setComposerOpen(false)
               }}
               onCancel={() => setComposerOpen(false)}
+            />
+          )}
+        </div>
+      </DetailSection>
+
+      {/* ── Tasks ── */}
+      <DetailSection id="tasks" label={t('field.tasks')}>
+        <div className="space-y-1">
+          {openTasks.map((tk) => (
+            <TaskRow
+              key={tk.id}
+              task={tk}
+              onToggleDone={() => void onTaskMarkDone?.(tk.id, new Date().toISOString())}
+              onEdit={(draft) => {
+                const now = new Date().toISOString()
+                const edited: ContactTask = {
+                  ...tk,
+                  text: draft.text,
+                  updatedAt: now,
+                }
+                if (draft.dueAt !== undefined) edited.dueAt = draft.dueAt
+                else delete edited.dueAt
+                if (draft.priority !== undefined) edited.priority = draft.priority
+                else delete edited.priority
+                void onTaskUpsert?.(edited)
+              }}
+              onDelete={() => void onTaskSoftDelete?.(tk.id)}
+            />
+          ))}
+          {doneTasks.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowDoneTasks((s) => !s)}
+              className={`text-xs ${TC.textMuted} hover:${TC.text}`}
+            >
+              {showDoneTasks ? t('task.hide_done') : t('task.show_done', { n: doneTasks.length })}
+            </button>
+          )}
+          {showDoneTasks &&
+            doneTasks.map((tk) => (
+              <TaskRow
+                key={tk.id}
+                task={tk}
+                onToggleDone={() => void onTaskReopen?.(tk.id)}
+                onEdit={(draft) => {
+                  const now = new Date().toISOString()
+                  const edited: ContactTask = {
+                    ...tk,
+                    text: draft.text,
+                    updatedAt: now,
+                  }
+                  if (draft.dueAt !== undefined) edited.dueAt = draft.dueAt
+                  else delete edited.dueAt
+                  if (draft.priority !== undefined) edited.priority = draft.priority
+                  else delete edited.priority
+                  void onTaskUpsert?.(edited)
+                }}
+                onDelete={() => void onTaskSoftDelete?.(tk.id)}
+              />
+            ))}
+          {!taskComposerOpen && (
+            <button
+              type="button"
+              onClick={() => setTaskComposerOpen(true)}
+              className="text-sm text-sky-400 hover:text-sky-300"
+            >
+              + {t('actions.add_task')}
+            </button>
+          )}
+          {taskComposerOpen && (
+            <TaskComposer
+              initial={{}}
+              onSave={(draft) => {
+                const now = new Date().toISOString()
+                const newTask: ContactTask = {
+                  id: ulid(),
+                  contactId: contact.id,
+                  text: draft.text,
+                  createdAt: now,
+                  updatedAt: now,
+                  lamportTs: 0, // overwritten by repo.upsert
+                  deviceId: '', // overwritten by repo.upsert
+                }
+                if (draft.dueAt !== undefined) newTask.dueAt = draft.dueAt
+                if (draft.priority !== undefined) newTask.priority = draft.priority
+                void onTaskUpsert?.(newTask)
+                setTaskComposerOpen(false)
+              }}
+              onCancel={() => setTaskComposerOpen(false)}
             />
           )}
         </div>

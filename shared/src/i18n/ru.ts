@@ -82,6 +82,7 @@ export const ru: Dict = {
     user_defined: 'Google custom fields',
     social: 'Соцсети',
     interactions: 'Взаимодействия',
+    tasks: 'Задачи',
   },
   empty: {
     no_contacts: 'Контактов пока нет',
@@ -110,6 +111,7 @@ export const ru: Dict = {
     hide: 'Скрыть',
     unhide: 'Показать',
     log_interaction: 'Записать взаимодействие',
+    add_task: 'Новая задача',
   },
   prompt: {
     filter_name: 'Название фильтра',
@@ -130,6 +132,7 @@ export const ru: Dict = {
     delete_interaction_title: 'Удалить это взаимодействие?',
     delete_interaction_body:
       'Запись будет помечена удалённой; может вернуться после синхронизации.',
+    delete_task_title: 'Удалить задачу?',
   },
   demo: {
     load_en: 'Загрузить демо (англ.)',
@@ -271,5 +274,12 @@ export const ru: Dict = {
   },
   interaction: {
     note_placeholder: 'О чём общались? (необязательно, поддерживается Markdown)',
+  },
+  task: {
+    text_placeholder: 'Что нужно сделать?',
+    no_priority: 'Без приоритета',
+    due_label: 'К',
+    show_done: 'Показать завершённые ({n})',
+    hide_done: 'Скрыть завершённые',
   },
 }

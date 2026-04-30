@@ -22,6 +22,7 @@ import { useDb } from './store/useDb'
 import { useContacts } from './store/useContacts'
 import { useNetworkData } from './store/useNetworkData'
 import { useInteractions } from './store/useInteractions'
+import { useContactTasks } from './store/useContactTasks'
 import { Sidebar } from './ui/Sidebar'
 import { MainList } from './ui/MainList'
 import { StatusBar } from './ui/StatusBar'
@@ -178,6 +179,15 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     upsert: upsertInteraction,
     softDelete: softDeleteInteraction,
   } = useInteractions(dbState.interactionsRepo, selectedId)
+
+  // Per-contact task list (P8.B.2)
+  const {
+    tasks: contactTasks,
+    upsert: upsertTask,
+    markDone: markTaskDone,
+    reopen: reopenTask,
+    softDelete: softDeleteTask,
+  } = useContactTasks(dbState.tasksRepo, selectedId)
   const [filters, setFilters] = useState<ContactFilters>(DEFAULT_FILTERS)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [editing, setEditing] = useState<{ open: boolean; contact: Contact | null }>({
@@ -634,6 +644,11 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
               interactions={contactInteractions}
               onInteractionUpsert={upsertInteraction}
               onInteractionSoftDelete={softDeleteInteraction}
+              tasks={contactTasks}
+              onTaskUpsert={upsertTask}
+              onTaskMarkDone={markTaskDone}
+              onTaskReopen={reopenTask}
+              onTaskSoftDelete={softDeleteTask}
             />
           </>
         ) : (

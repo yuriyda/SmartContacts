@@ -80,6 +80,7 @@ export const en = {
     user_defined: 'Google custom fields',
     social: 'Social',
     interactions: 'Interactions',
+    tasks: 'Tasks',
   },
   empty: {
     no_contacts: 'No contacts yet',
@@ -108,6 +109,7 @@ export const en = {
     hide: 'Hide',
     unhide: 'Unhide',
     log_interaction: 'Log interaction',
+    add_task: 'Add task',
   },
   prompt: {
     filter_name: 'Filter name',
@@ -128,6 +130,7 @@ export const en = {
     protect_edit_summary: '{n} field(s) will change on a protected contact. Save?',
     delete_interaction_title: 'Delete this interaction?',
     delete_interaction_body: 'The entry will be soft-deleted and can re-appear after sync.',
+    delete_task_title: 'Delete task?',
   },
   demo: {
     load_en: 'Load demo data (English)',
@@ -268,6 +271,13 @@ export const en = {
   },
   interaction: {
     note_placeholder: 'What did you talk about? (optional, Markdown supported)',
+  },
+  task: {
+    text_placeholder: 'What needs to be done?',
+    no_priority: 'No priority',
+    due_label: 'Due',
+    show_done: 'Show {n} done',
+    hide_done: 'Hide done',
   },
 }
 export type Dict = typeof en
