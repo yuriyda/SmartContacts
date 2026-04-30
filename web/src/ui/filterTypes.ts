@@ -13,6 +13,8 @@ export interface ContactFilters {
   group: string | null
   /** Tag name to further narrow scope, or null for no tag filter. */
   tag: string | null
+  /** Organization name to further narrow scope; undefined means no org filter. */
+  organization?: string
   /** Free-text search query; non-empty overrides scope/group/tag (searches alive contacts only). */
   search: string
 }

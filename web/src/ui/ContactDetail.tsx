@@ -45,6 +45,8 @@ export interface ContactDetailProps {
   onDelete?: () => void
   onRestore?: () => void
   onSelectContact?: (id: string) => void
+  /** Panel width in px; driven by parent ResizeHandle state. */
+  width?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +233,7 @@ export function ContactDetail({
   onDelete,
   onRestore,
   onSelectContact,
+  width = 420,
 }: ContactDetailProps) {
   const { TC, t, locale } = useApp()
 
@@ -238,7 +241,8 @@ export function ContactDetail({
   if (contact === null) {
     return (
       <aside
-        className={`w-[420px] border-l ${TC.borderClass} ${TC.aside} flex items-center justify-center`}
+        className={`relative flex-shrink-0 border-l ${TC.borderClass} ${TC.aside} flex items-center justify-center`}
+        style={{ width: `${width}px` }}
       >
         <EmptyState icon={Users} title={t('empty.select')} />
       </aside>
@@ -271,7 +275,8 @@ export function ContactDetail({
 
   return (
     <aside
-      className={`w-[420px] border-l ${TC.borderClass} ${TC.aside} flex flex-col overflow-y-auto`}
+      className={`relative flex-shrink-0 border-l ${TC.borderClass} ${TC.aside} flex flex-col overflow-y-auto`}
+      style={{ width: `${width}px` }}
     >
       {/* ── Deleted banner ── */}
       {isDeleted && (

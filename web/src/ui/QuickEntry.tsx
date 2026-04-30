@@ -167,6 +167,7 @@ export function QuickEntry({ ctx, onCommit, onTab, onCancel }: QuickEntryProps) 
       phone: 'bg-sky-600/30 text-sky-200',
       email: 'bg-sky-600/30 text-sky-200',
       organization: 'bg-purple-600/30 text-purple-200',
+      position: 'bg-fuchsia-600/30 text-fuchsia-200',
       birthday: 'bg-pink-600/30 text-pink-200',
       nickname: 'bg-yellow-600/30 text-yellow-200',
       relation: 'bg-cyan-600/30 text-cyan-200',

@@ -1,14 +1,17 @@
 /**
  * @file Sidebar.tsx
  * Left navigation sidebar for Smart Contacts.
- * Renders scope filters (All / Starred / Recent / Birthdays / Trash), group list, and tag list.
+ * Renders scope filters (All / Starred / Recent / Birthdays / Trash), group list, tag list,
+ * and organizations list (T3: sorted by recency, capped at 50, DnD drop targets).
  * Modeled after TaskOrchestrator/tauri-app/src/ui/Sidebar.tsx — Section + FilterItem pattern.
  * Rules: reads theme/density/t from AppContext only; no direct DB access.
- * Accepts contacts array for live counts and group/tag derivation.
+ * Accepts contacts array for live counts and group/tag/org derivation.
+ * DnD: group, tag, and organization chips become drop targets when the corresponding
+ *      onDrop* callback is provided.
  */
 import { useState, useMemo } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import type { Contact } from '@smart-contacts/shared'
+import type { Contact, GroupMembership } from '@smart-contacts/shared'
 import { deriveLookups, isBirthdayThisMonth } from '@smart-contacts/shared'
 import { useApp } from './AppContext'
 import {
@@ -19,14 +22,17 @@ import {
   Trash2,
   Users,
   Tag,
+  Briefcase,
   ChevronRight,
   ChevronsDown,
   ChevronsUp,
   Settings,
   X,
+  Keyboard,
 } from './icons'
 import type { ContactFilters } from './filterTypes'
 import type { SavedFilter } from './savedFilters'
+import { DND_MIME } from './dnd'
 
 interface SidebarProps {
   contacts: Contact[]
@@ -37,6 +43,14 @@ interface SidebarProps {
   onOpenSettings: () => void
   savedFilters: SavedFilter[]
   onDeleteSavedFilter: (id: string) => void
+  /** Panel width in px; driven by parent ResizeHandle state. */
+  width: number
+  /** Called when a contact row is dropped onto a group chip. */
+  onDropContactOnGroup?: (contactId: string, group: GroupMembership) => void
+  /** Called when a contact row is dropped onto a tag chip. */
+  onDropContactOnTag?: (contactId: string, tagName: string) => void
+  /** Called when a contact row is dropped onto an organization chip. */
+  onDropContactOnOrganization?: (contactId: string, orgName: string) => void
 }
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
@@ -50,8 +64,18 @@ export function Sidebar({
   onOpenSettings,
   savedFilters,
   onDeleteSavedFilter,
+  width,
+  onDropContactOnGroup,
+  onDropContactOnTag,
+  onDropContactOnOrganization,
 }: SidebarProps) {
   const { TC, t, density } = useApp()
+
+  // Tracks which chip (group or tag) the user is currently hovering over during a drag.
+  const [dropTarget, setDropTarget] = useState<{
+    kind: 'group' | 'tag' | 'org'
+    key: string
+  } | null>(null)
 
   const lookups = useMemo(() => deriveLookups(contacts), [contacts])
 
@@ -71,15 +95,49 @@ export function Sidebar({
     }
   }, [contacts])
 
-  const [open, setOpen] = useState({ filters: true, saved: true, groups: true, tags: true })
+  const [open, setOpen] = useState({
+    filters: true,
+    saved: true,
+    groups: true,
+    tags: true,
+    organizations: true,
+    hotkeys: false,
+  })
   const toggle = (key: keyof typeof open) => setOpen((o) => ({ ...o, [key]: !o[key] }))
 
-  const SECTION_KEYS: Array<keyof typeof open> = ['filters', 'saved', 'groups', 'tags']
+  const SECTION_KEYS: Array<keyof typeof open> = [
+    'filters',
+    'saved',
+    'groups',
+    'tags',
+    'organizations',
+    'hotkeys',
+  ]
   const allExpanded = SECTION_KEYS.every((k) => open[k])
   const toggleAll = () => {
     const target = !allExpanded
-    setOpen({ filters: target, saved: target, groups: target, tags: target })
+    setOpen({
+      filters: target,
+      saved: target,
+      groups: target,
+      tags: target,
+      organizations: target,
+      hotkeys: target,
+    })
   }
+
+  // Hotkey list — mirrors TaskOrchestrator/tauri-app/src/ui/Sidebar.tsx
+  const HOTKEYS: Array<[combo: string, descKey: string]> = [
+    ['Ctrl/Cmd+N', 'hotkey.add'],
+    ['Ctrl/Cmd+,', 'hotkey.settings'],
+    ['j / k', 'hotkey.next'],
+    ['e', 'hotkey.edit'],
+    ['d', 'hotkey.delete'],
+    ['t', 'hotkey.touch'],
+    ['/', 'hotkey.search'],
+    ['?', 'hotkey.help'],
+    ['Esc', 'hotkey.escape'],
+  ]
 
   const itemPy = density === 'compact' ? 'py-0.5' : 'py-1.5'
 
@@ -150,8 +208,8 @@ export function Sidebar({
 
   return (
     <aside
-      className={`w-56 flex-shrink-0 border-r p-3 flex flex-col overflow-hidden ${TC.borderClass} ${TC.aside}`}
-      style={{ scrollbarWidth: 'thin' }}
+      className={`relative flex-shrink-0 border-r p-3 flex flex-col overflow-hidden ${TC.borderClass} ${TC.aside}`}
+      style={{ width: `${width}px`, scrollbarWidth: 'thin' }}
     >
       <div
         className={`flex-1 ${density === 'compact' ? 'space-y-2' : 'space-y-4'} overflow-y-auto`}
@@ -178,11 +236,14 @@ export function Sidebar({
               icon={Inbox}
               label={t('sidebar.all')}
               count={counts.all}
-              active={filters.scope === 'all' && !filters.group && !filters.tag}
+              active={
+                filters.scope === 'all' && !filters.group && !filters.tag && !filters.organization
+              }
               onClick={() => {
                 setFilter('scope', 'all')
                 setFilter('group', null)
                 setFilter('tag', null)
+                setFilter('organization', undefined)
               }}
             />
             <FilterItem
@@ -262,7 +323,27 @@ export function Sidebar({
                 onClick={() =>
                   filters.group === g.id ? setFilter('group', null) : setFilter('group', g.id)
                 }
+                {...(onDropContactOnGroup && {
+                  onDragOver: (e: React.DragEvent<HTMLButtonElement>) => {
+                    if (e.dataTransfer.types.includes(DND_MIME)) {
+                      e.preventDefault()
+                      setDropTarget({ kind: 'group', key: g.id })
+                    }
+                  },
+                  onDragLeave: () => setDropTarget(null),
+                  onDrop: (e: React.DragEvent<HTMLButtonElement>) => {
+                    e.preventDefault()
+                    const contactId = e.dataTransfer.getData(DND_MIME)
+                    if (!contactId) return
+                    onDropContactOnGroup(contactId, { id: g.id, name: g.name })
+                    setDropTarget(null)
+                  },
+                })}
                 className={`w-full flex items-center gap-2 px-3 rounded-md text-sm transition-colors ${itemPy} ${
+                  dropTarget?.kind === 'group' && dropTarget.key === g.id
+                    ? 'ring-2 ring-sky-500/60'
+                    : ''
+                } ${
                   filters.group === g.id
                     ? 'bg-sky-600/20 text-sky-300'
                     : `${TC.textMuted} ${TC.hoverBg} hover:text-gray-200`
@@ -286,7 +367,27 @@ export function Sidebar({
                 onClick={() =>
                   filters.tag === tg.name ? setFilter('tag', null) : setFilter('tag', tg.name)
                 }
+                {...(onDropContactOnTag && {
+                  onDragOver: (e: React.DragEvent<HTMLButtonElement>) => {
+                    if (e.dataTransfer.types.includes(DND_MIME)) {
+                      e.preventDefault()
+                      setDropTarget({ kind: 'tag', key: tg.name })
+                    }
+                  },
+                  onDragLeave: () => setDropTarget(null),
+                  onDrop: (e: React.DragEvent<HTMLButtonElement>) => {
+                    e.preventDefault()
+                    const contactId = e.dataTransfer.getData(DND_MIME)
+                    if (!contactId) return
+                    onDropContactOnTag(contactId, tg.name)
+                    setDropTarget(null)
+                  },
+                })}
                 className={`w-full flex items-center gap-2 px-3 rounded-md text-sm transition-colors ${itemPy} ${
+                  dropTarget?.kind === 'tag' && dropTarget.key === tg.name
+                    ? 'ring-2 ring-sky-500/60'
+                    : ''
+                } ${
                   filters.tag === tg.name
                     ? 'bg-sky-600/20 text-sky-300'
                     : `${TC.textMuted} ${TC.hoverBg} hover:text-gray-200`
@@ -296,6 +397,70 @@ export function Sidebar({
                 <span className="text-xs opacity-60">{tg.count}</span>
                 {filters.tag === tg.name && <X size={10} className="flex-shrink-0" />}
               </button>
+            ))}
+          </div>
+        </Section>
+
+        {/* ── Organizations section ── */}
+        <Section id="organizations" label={t('sidebar.organizations')} icon={Briefcase}>
+          <div className="space-y-0.5">
+            {lookups.organizations.length === 0 && (
+              <p className={`px-3 text-xs ${TC.textMuted} py-1`}>—</p>
+            )}
+            {lookups.organizations.map((org) => (
+              <button
+                key={org.name}
+                onClick={() =>
+                  filters.organization === org.name
+                    ? setFilter('organization', undefined)
+                    : setFilter('organization', org.name)
+                }
+                {...(onDropContactOnOrganization && {
+                  onDragOver: (e: React.DragEvent<HTMLButtonElement>) => {
+                    if (e.dataTransfer.types.includes(DND_MIME)) {
+                      e.preventDefault()
+                      setDropTarget({ kind: 'org', key: org.name })
+                    }
+                  },
+                  onDragLeave: () => setDropTarget(null),
+                  onDrop: (e: React.DragEvent<HTMLButtonElement>) => {
+                    e.preventDefault()
+                    const contactId = e.dataTransfer.getData(DND_MIME)
+                    if (!contactId) return
+                    onDropContactOnOrganization(contactId, org.name)
+                    setDropTarget(null)
+                  },
+                })}
+                className={`w-full flex items-center gap-2 px-3 rounded-md text-sm transition-colors ${itemPy} ${
+                  dropTarget?.kind === 'org' && dropTarget.key === org.name
+                    ? 'ring-2 ring-sky-500/60'
+                    : ''
+                } ${
+                  filters.organization === org.name
+                    ? 'bg-sky-600/20 text-sky-300'
+                    : `${TC.textMuted} ${TC.hoverBg} hover:text-gray-200`
+                }`}
+              >
+                <span className="flex-1 text-left truncate">{org.name}</span>
+                <span className="text-xs opacity-60">{org.count}</span>
+                {filters.organization === org.name && <X size={10} className="flex-shrink-0" />}
+              </button>
+            ))}
+          </div>
+        </Section>
+
+        {/* ── Hotkeys section (collapsed by default; mirrors TaskOrchestrator) ── */}
+        <Section id="hotkeys" label={t('sidebar.hotkeys')} icon={Keyboard}>
+          <div className={`space-y-1.5 text-xs ${TC.textMuted}`}>
+            {HOTKEYS.map(([combo, key]) => (
+              <div key={combo} className="flex items-start gap-2">
+                <kbd
+                  className={`px-1.5 py-0.5 rounded font-mono text-[10px] whitespace-nowrap flex-shrink-0 ${TC.elevated} ${TC.textSec}`}
+                >
+                  {combo}
+                </kbd>
+                <span>{t(key)}</span>
+              </div>
             ))}
           </div>
         </Section>

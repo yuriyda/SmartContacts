@@ -39,6 +39,8 @@ export interface SettingsDialogProps {
   refreshDefs: () => Promise<void>
   refreshContacts: () => void
   onResetGuide: () => Promise<void>
+  /** Called when the user clicks "Reset panel widths" in General tab. */
+  onResetLayout?: () => void
 }
 
 interface ToastEntry {
@@ -72,6 +74,7 @@ export function SettingsDialog({
   refreshDefs,
   refreshContacts,
   onResetGuide,
+  onResetLayout,
 }: SettingsDialogProps) {
   const { TC, t } = useApp()
   const [tab, setTab] = useState<TabKey>(initialTab)
@@ -175,6 +178,7 @@ export function SettingsDialog({
                   refreshContacts={refreshContacts}
                   refreshDefs={refreshDefs}
                   onToast={addToast}
+                  {...(onResetLayout !== undefined ? { onResetLayout } : {})}
                 />
               )}
               {tab === 'custom_fields' && (

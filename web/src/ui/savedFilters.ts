@@ -35,9 +35,15 @@ export async function saveSavedFilters(
   await saveMeta(META_KEY, JSON.stringify(presets))
 }
 
-/** A filter is "non-trivial" if it differs from default in scope, group, tag, or has non-empty search. */
+/** A filter is "non-trivial" if it differs from default in scope, group, tag, org, or has non-empty search. */
 export function isFilterNonTrivial(f: ContactFilters): boolean {
-  return f.scope !== 'all' || f.group !== null || f.tag !== null || f.search.trim() !== ''
+  return (
+    f.scope !== 'all' ||
+    f.group !== null ||
+    f.tag !== null ||
+    !!f.organization ||
+    f.search.trim() !== ''
+  )
 }
 
 function isValidPreset(p: unknown): p is SavedFilter {

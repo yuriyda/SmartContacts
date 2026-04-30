@@ -93,6 +93,23 @@ describe('tryCommitToken', () => {
     expect((tryCommitToken('*Acme')?.chip.payload as never as { name: string }).name).toBe('Acme')
   })
 
+  test('position type', () => {
+    expect(tryCommitToken('&CTO')?.chip.type).toBe('position')
+  })
+
+  test('position payload value', () => {
+    expect((tryCommitToken('&CTO')?.chip.payload as never as { value: string }).value).toBe('CTO')
+  })
+
+  test('position rejects bare ampersand', () => {
+    expect(tryCommitToken('&')).toBeNull()
+  })
+
+  test('position rejects ampersand with spaces (multi-word not supported)', () => {
+    // tryCommitToken expects single token; a multi-word position is impossible here.
+    expect(tryCommitToken('&Senior Engineer')).toBeNull()
+  })
+
   test('birthday DD.MM.YYYY converts to ISO', () => {
     expect((tryCommitToken('^15.03.1985')?.chip.payload as never as { date: string }).date).toBe(
       '1985-03-15',

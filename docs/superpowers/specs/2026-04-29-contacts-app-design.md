@@ -411,11 +411,14 @@ Visual language, color themes, density modes, Status Line and Settings dialog ar
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-- **Sidebar**: All / Starred (priority ≥ 4) / Birthdays-this-month / Groups (Google) / Tags / Saved filters / Recent activity / Trash.
+- **Sidebar**: All / Starred (priority ≥ 4) / Birthdays-this-month / Groups (Google) / Tags / Organizations / Saved filters / Recent activity / Trash.
 - **Main**: list (dense) ↔ cards toggle. Sortbar by name / lastContactedAt / createdAt / priority. Bulk actions via checkboxes + context menu.
 - **Detail Panel**: collapsible sections — Names, Contacts, Addresses, Events, Organization, URLs, IM, Notes (Markdown editor), Tags, Custom fields, Relations (clickable), Reminders, History (auto-built from `sync_log`). Inline edit for simple fields, modal `ContactEditDialog` for multi-valued.
 - **StatusBar**: contacts count under filter; sync indicator; Google integration state; device-id (4-char prefix); theme/density toggles.
 - **Keyboard**: `j/k` navigate, `e` edit, `d` soft-delete, `t` tag, `/` focus search, `?` help, `Esc` close panel, `Cmd/Ctrl+N` QuickEntry, `Cmd/Ctrl+,` Settings.
+- **Resizable layout (desktop)**: vertical drag-handles between Sidebar / Main / DetailPanel. Widths persisted in `meta.layout_widths_v1` (JSON). Min widths 180/280/240; max 480/∞/640. Reset via Settings → General.
+- **Drag & Drop (desktop)**: drag a contact row from Main and drop onto a Sidebar Group / Tag / Organization chip to add the corresponding membership/tag/organization. HTML5 DnD; `dragover` highlights the drop target with a sky-600/30 ring. No-op on touch devices — mobile parity (long-press → bottom-sheet picker) is deferred to P6.
+- **Organizations filter**: sidebar section listing every organization name across all alive contacts (current OR past), sorted by recency (latest `updatedAt` of any contact mentioning it), capped at 50 entries. Click toggles `filters.organization`.
 
 ### Mobile (`pwa/`)
 
@@ -440,6 +443,7 @@ Structurally identical to `tauri-app/src/ui/QuickEntry.tsx` and `parse/quickEntr
 | `+` | phone | parsed into `phones[]` (auto-detect mobile/work) |
 | `@` | email | parsed into `emails[]` |
 | `*` | organization | `organizations[]` (current=true) |
+| `&` | position | `occupation` (job title; one whitespace-separated word) |
 | `^` | birthday | `events[]` type=birthday, parsed date |
 | `~` | nickname | `nickname` |
 | `>>` | relation | autocomplete by displayName ⇒ `relations_internal` |
@@ -448,7 +452,7 @@ Structurally identical to `tauri-app/src/ui/QuickEntry.tsx` and `parse/quickEntr
 
 Example:
 ```
-Иван Иванов #dev #важные !2 /Work +79991234567 @ivan@acme.com *Acme ^15.03.1985 >>Анна
+Иван Иванов #dev #важные !2 /Work +79991234567 @ivan@acme.com *Acme &CTO ^15.03.1985 >>Анна
 ```
 
 Suggestions dropdown navigated with Arrow / Tab / Enter, same UX as reference. Tab on `displayName` opens full `ContactEditDialog` for fields without a prefix (addresses, phonetics, custom fields).

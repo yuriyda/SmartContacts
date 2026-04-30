@@ -10,6 +10,7 @@ import type { RefObject } from 'react'
 import { useApp } from './AppContext'
 import { Search, Settings as SettingsIcon } from './icons'
 import { QuickEntry } from './QuickEntry'
+import { Logo } from './Logo'
 import { deriveLookups, type Contact, type ParsedQuickEntry } from '@smart-contacts/shared'
 
 interface NavHeaderProps {
@@ -56,6 +57,7 @@ export function NavHeader({
       >
         ☰
       </button>
+      <Logo size={26} />
       <h1 className={`text-lg font-semibold ${TC.text}`}>{t('app.title')}</h1>
       <div className="flex-1 flex items-center gap-2 max-w-xl">
         <Search size={14} className={TC.textMuted} />

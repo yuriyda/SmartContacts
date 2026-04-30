@@ -6,8 +6,16 @@
  * No DB access directly in this file — all mutations go through useContacts.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Contact, CustomFieldDef } from '@smart-contacts/shared'
-import { ulid, type Chip, type ParsedQuickEntry } from '@smart-contacts/shared'
+import type { Contact, CustomFieldDef, GroupMembership } from '@smart-contacts/shared'
+import {
+  ulid,
+  type Chip,
+  type ParsedQuickEntry,
+  clampWidth,
+  addContactToGroup,
+  addContactToTag,
+  addContactToOrganization,
+} from '@smart-contacts/shared'
 import { AppProvider, useApp } from './ui/AppContext'
 import { useDb } from './store/useDb'
 import { useContacts } from './store/useContacts'
@@ -16,6 +24,7 @@ import { MainList } from './ui/MainList'
 import { StatusBar } from './ui/StatusBar'
 import { NavHeader } from './ui/NavHeader'
 import { ContactDetail } from './ui/ContactDetail'
+import { ResizeHandle } from './ui/ResizeHandle'
 import { ContactEditDialog } from './ui/ContactEditDialog'
 import { SettingsDialog } from './ui/SettingsDialog'
 import { GuideOverlay } from './ui/GuideOverlay'
@@ -87,6 +96,54 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     setDefsVersion((v) => v + 1)
   }, [])
 
+  // ---------------------------------------------------------------------------
+  // Panel widths — persisted in meta.layout_widths_v1
+  // ---------------------------------------------------------------------------
+
+  // Defaults used on first load and after reset.
+  const SIDEBAR_DEFAULT = 224
+  const DETAIL_DEFAULT = 384
+
+  // Read persisted widths from metaSettings, clamped to valid ranges.
+  const readLayoutWidths = useCallback((meta: Record<string, string>) => {
+    const raw = meta['layout_widths_v1']
+    if (!raw) return { sidebar: SIDEBAR_DEFAULT, detail: DETAIL_DEFAULT }
+    try {
+      const parsed = JSON.parse(raw) as { sidebar?: number; detail?: number }
+      return {
+        sidebar: clampWidth(parsed.sidebar ?? SIDEBAR_DEFAULT, 180, 480),
+        detail: clampWidth(parsed.detail ?? DETAIL_DEFAULT, 240, 640),
+      }
+    } catch {
+      return { sidebar: SIDEBAR_DEFAULT, detail: DETAIL_DEFAULT }
+    }
+  }, [])
+
+  const [sidebarWidth, setSidebarWidth] = useState(() => readLayoutWidths(metaSettings).sidebar)
+  const [detailWidth, setDetailWidth] = useState(() => readLayoutWidths(metaSettings).detail)
+
+  // Sync widths when meta loads asynchronously (DB reads after mount).
+  useEffect(() => {
+    const { sidebar, detail } = readLayoutWidths(metaSettings)
+    setSidebarWidth(sidebar)
+    setDetailWidth(detail)
+  }, [metaSettings, readLayoutWidths])
+
+  const persistWidths = useCallback(
+    (sidebar: number, detail: number) => {
+      void saveMeta('layout_widths_v1', JSON.stringify({ sidebar, detail }))
+    },
+    [saveMeta],
+  )
+
+  const handleResetLayout = useCallback(() => {
+    void saveMeta('layout_widths_v1', '')
+    setSidebarWidth(SIDEBAR_DEFAULT)
+    setDetailWidth(DETAIL_DEFAULT)
+  }, [saveMeta])
+
+  // ---------------------------------------------------------------------------
+
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filters, setFilters] = useState<ContactFilters>(DEFAULT_FILTERS)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -146,6 +203,16 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     setEditing({ open: true, contact: selected })
   }, [selected])
 
+  const handleOpenEdit = useCallback(
+    (id: string) => {
+      const c = contacts.find((x) => x.id === id)
+      if (!c) return
+      setSelectedId(id)
+      setEditing({ open: true, contact: c })
+    },
+    [contacts],
+  )
+
   const handleSaveContact = useCallback(
     async (c: Contact) => {
       await upsert(c)
@@ -167,6 +234,46 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       setSelectedId(c.id)
     },
     [contacts, upsert],
+  )
+
+  // ---------------------------------------------------------------------------
+  // DnD handlers — called when a contact row is dropped onto a sidebar chip.
+  // ---------------------------------------------------------------------------
+
+  const onDropContactOnGroup = useCallback(
+    async (contactId: string, group: GroupMembership) => {
+      const c = contacts.find((x) => x.id === contactId)
+      if (!c) return
+      const updated = addContactToGroup(c, group)
+      if (updated === c) return // idempotent — already a member, silent no-op
+      await upsert(updated)
+      push(t('actions.added_to_group', { name: group.name ?? group.id }))
+    },
+    [contacts, upsert, push, t],
+  )
+
+  const onDropContactOnTag = useCallback(
+    async (contactId: string, tagName: string) => {
+      const c = contacts.find((x) => x.id === contactId)
+      if (!c) return
+      const updated = addContactToTag(c, tagName)
+      if (updated === c) return // idempotent — already tagged, silent no-op
+      await upsert(updated)
+      push(t('actions.added_to_tag', { name: tagName }))
+    },
+    [contacts, upsert, push, t],
+  )
+
+  const onDropContactOnOrganization = useCallback(
+    async (contactId: string, orgName: string) => {
+      const c = contacts.find((x) => x.id === contactId)
+      if (!c) return
+      const updated = addContactToOrganization(c, orgName)
+      if (updated === c) return // idempotent — already linked, silent no-op
+      await upsert(updated)
+      push(t('actions.added_to_organization', { name: orgName }))
+    },
+    [contacts, upsert, push, t],
   )
 
   // Merge QuickEntry chips into a Contact object.
@@ -201,6 +308,9 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
             break
           case 'organization':
             result.organizations = [{ name: ch.payload.name, current: true }]
+            break
+          case 'position':
+            result.occupation = ch.payload.value
             break
           case 'birthday':
             result.events = [{ date: ch.payload.date, type: 'birthday' }]
@@ -318,7 +428,6 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       combo: '/',
       handler: () => searchInputRef.current?.focus(),
       description: 'hotkey.search',
-      skipInInput: false,
     },
     { combo: '?', handler: () => setHelpOpen((o) => !o), description: 'hotkey.help' },
     {
@@ -362,6 +471,13 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
 
   return (
     <div className={`h-full flex flex-col ${TC.root}`}>
+      <style>{`
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track       { background: ${TC.scrollTrack}; }
+        ::-webkit-scrollbar-thumb       { background: ${TC.scrollThumb}; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: ${TC.scrollThumbHover}; }
+        * { scrollbar-color: ${TC.scrollThumb} ${TC.scrollTrack}; }
+      `}</style>
       <NavHeader
         contacts={contacts}
         search={filters.search}
@@ -376,16 +492,30 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
 
       <div className="flex-1 flex min-h-0">
         {sidebarOpen && (
-          <Sidebar
-            contacts={contacts}
-            filters={filters}
-            setFilter={setFilter}
-            setFilters={setAllFilters}
-            resetFilters={resetFilters}
-            onOpenSettings={() => setSettingsOpen(true)}
-            savedFilters={savedFilters}
-            onDeleteSavedFilter={(id) => void onDeleteSavedFilter(id)}
-          />
+          <>
+            <Sidebar
+              contacts={contacts}
+              filters={filters}
+              setFilter={setFilter}
+              setFilters={setAllFilters}
+              resetFilters={resetFilters}
+              onOpenSettings={() => setSettingsOpen(true)}
+              savedFilters={savedFilters}
+              onDeleteSavedFilter={(id) => void onDeleteSavedFilter(id)}
+              width={sidebarWidth}
+              onDropContactOnGroup={(id, g) => void onDropContactOnGroup(id, g)}
+              onDropContactOnTag={(id, tag) => void onDropContactOnTag(id, tag)}
+              onDropContactOnOrganization={(id, org) => void onDropContactOnOrganization(id, org)}
+            />
+            <ResizeHandle
+              edge="left"
+              width={sidebarWidth}
+              min={180}
+              max={480}
+              onResize={setSidebarWidth}
+              onCommit={(finalWidth) => persistWidths(finalWidth, detailWidth)}
+            />
+          </>
         )}
         <MainList
           contacts={filtered}
@@ -393,7 +523,16 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
           onSelect={setSelectedId}
           onTouch={(id) => void touch(id)}
           onSoftDelete={(id) => void handleSoftDelete(id)}
+          onOpenEdit={handleOpenEdit}
           loading={loading}
+        />
+        <ResizeHandle
+          edge="right"
+          width={detailWidth}
+          min={240}
+          max={640}
+          onResize={setDetailWidth}
+          onCommit={(finalWidth) => persistWidths(sidebarWidth, finalWidth)}
         />
         <ContactDetail
           contact={selected}
@@ -404,6 +543,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
           onDelete={() => selectedId && void handleSoftDelete(selectedId)}
           onRestore={() => selectedId && void restore(selectedId)}
           onSelectContact={setSelectedId}
+          width={detailWidth}
         />
       </div>
 
@@ -435,6 +575,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
         refreshDefs={refreshDefs}
         refreshContacts={refresh}
         onResetGuide={replayGuide}
+        onResetLayout={handleResetLayout}
       />
 
       <GuideOverlay open={guideOpen} onDismiss={dismissGuide} />

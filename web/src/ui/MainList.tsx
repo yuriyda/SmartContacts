@@ -17,6 +17,7 @@ interface MainListProps {
   onSelect: (id: string) => void
   onTouch: (id: string) => void
   onSoftDelete: (id: string) => void
+  onOpenEdit: (id: string) => void
   loading: boolean
 }
 
@@ -26,6 +27,7 @@ export function MainList({
   onSelect,
   onTouch,
   onSoftDelete,
+  onOpenEdit,
   loading,
 }: MainListProps) {
   const { TC, t } = useApp()
@@ -75,6 +77,7 @@ export function MainList({
           onSelect={() => onSelect(c.id)}
           onTouch={() => onTouch(c.id)}
           onSoftDelete={() => onSoftDelete(c.id)}
+          onOpenEdit={onOpenEdit}
         />
       ))}
     </div>

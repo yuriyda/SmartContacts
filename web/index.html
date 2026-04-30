@@ -7,6 +7,21 @@
   </head>
   <body class="m-0">
     <div id="root"></div>
+    <!--
+      Stale-SW cleanup: web/ does NOT register a service worker (PWA lives in pwa/).
+      Unregister any leftover SW from earlier project state on first load,
+      so dev HMR is no longer hidden behind a cached install.
+    -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          regs.forEach((r) => r.unregister())
+        })
+        if (window.caches) {
+          caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)))
+        }
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

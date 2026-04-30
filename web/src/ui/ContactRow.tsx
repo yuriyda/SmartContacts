@@ -4,12 +4,15 @@
  * Shows avatar, display name, primary phone/email (comfortable mode), tags, and priority dot.
  * Modeled after TaskOrchestrator/tauri-app/src/ui/TaskRow.tsx — visual grammar and spacing.
  * Rules: no DB access; only presentational. Uses AppContext for theme/density/locale.
+ * DnD: rows are made draggable on non-touch devices only (isTouchDevice guard).
+ *       The dragged data is the contact id, transferred under DND_MIME.
  */
 import type { Contact } from '@smart-contacts/shared'
 import { computeDisplayName } from '@smart-contacts/shared'
 import { useApp } from './AppContext'
 import { PriorityBadge, TagPill } from './badges'
 import { ContactAvatar } from './ContactAvatar'
+import { DND_MIME, isTouchDevice } from './dnd'
 
 interface ContactRowProps {
   contact: Contact
@@ -17,6 +20,7 @@ interface ContactRowProps {
   onSelect: () => void
   onTouch?: () => void
   onSoftDelete?: () => void
+  onOpenEdit?: (id: string) => void
 }
 
 export function ContactRow({
@@ -25,6 +29,7 @@ export function ContactRow({
   onSelect,
   onTouch: _onTouch,
   onSoftDelete: _onSoftDelete,
+  onOpenEdit,
 }: ContactRowProps) {
   const { TC, density, locale } = useApp()
   const name = computeDisplayName(contact, locale)
@@ -36,6 +41,7 @@ export function ContactRow({
   return (
     <div
       onClick={onSelect}
+      onDoubleClick={() => onOpenEdit?.(contact.id)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
@@ -44,6 +50,13 @@ export function ContactRow({
       }}
       role="button"
       tabIndex={0}
+      {...(!isTouchDevice && {
+        draggable: true,
+        onDragStart: (e: React.DragEvent<HTMLDivElement>) => {
+          e.dataTransfer.setData(DND_MIME, contact.id)
+          e.dataTransfer.effectAllowed = 'copy'
+        },
+      })}
       className={[
         'flex items-center gap-3 px-3 cursor-pointer transition-colors outline-none',
         density === 'compact' ? 'py-1' : 'py-2',

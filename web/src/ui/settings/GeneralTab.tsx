@@ -22,6 +22,8 @@ interface GeneralTabProps {
   refreshContacts: () => void
   refreshDefs: () => Promise<void>
   onToast: (msg: string) => void
+  /** Called when the user wants to clear persisted panel widths. */
+  onResetLayout?: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +97,12 @@ const THEME_COLORS: Record<string, readonly [string, string]> = {
   gruvbox: ['#282828', '#d79921'],
 }
 
-export function GeneralTab({ refreshContacts, refreshDefs, onToast }: GeneralTabProps) {
+export function GeneralTab({
+  refreshContacts,
+  refreshDefs,
+  onToast,
+  onResetLayout,
+}: GeneralTabProps) {
   const {
     t,
     locale,
@@ -215,6 +222,19 @@ export function GeneralTab({ refreshContacts, refreshDefs, onToast }: GeneralTab
           <option value="YYYY-MM-DD">YYYY-MM-DD</option>
           <option value="MM/DD/YYYY">MM/DD/YYYY</option>
         </select>
+      </SettingRow>
+
+      <div className={`border-t ${TC.borderClass}`} />
+
+      {/* Panel widths reset */}
+      <SettingRow label={t('settings.reset_layout')}>
+        <button
+          type="button"
+          onClick={() => onResetLayout?.()}
+          className={`px-3 py-1.5 rounded text-sm border transition-colors ${TC.borderClass} ${TC.textSec} hover:opacity-80`}
+        >
+          {t('settings.reset_layout')}
+        </button>
       </SettingRow>
 
       <div className={`border-t ${TC.borderClass}`} />

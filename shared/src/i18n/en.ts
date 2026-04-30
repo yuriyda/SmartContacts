@@ -27,8 +27,10 @@ export const en = {
     birthdays: 'Birthdays this month',
     groups: 'Groups',
     tags: 'Tags',
+    organizations: 'Organizations',
     trash: 'Trash',
     saved: 'Saved',
+    hotkeys: 'Hotkeys',
   },
   field: {
     given_name: 'First name',
@@ -82,6 +84,9 @@ export const en = {
     replay_guide: 'Replay welcome guide',
     save_filter: 'Save filter',
     delete_filter: 'Delete',
+    added_to_group: 'Added to {name}',
+    added_to_tag: 'Tagged #{name}',
+    added_to_organization: 'Linked to {name}',
   },
   prompt: {
     filter_name: 'Filter name',
@@ -112,6 +117,7 @@ export const en = {
   },
   settings: {
     title: 'Settings',
+    reset_layout: 'Reset panel widths',
     tabs: {
       general: 'General',
       custom_fields: 'Custom fields',
@@ -157,6 +163,7 @@ export const en = {
     touch: 'Touch (last contacted = now)',
     search: 'Focus search',
     help: 'Show this help',
+    escape: 'Close / clear',
   },
   event: {
     birthday: 'Birthday',

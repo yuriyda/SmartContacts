@@ -2,7 +2,8 @@
 // Converts shorthand tokens (prefix-based) into structured chip payloads.
 //
 // Supported prefixes: # tag, ! priority, / group, + phone, @ email,
-//   * organization, ^ birthday, ~ nickname, >> relation, ? channel, tg/gh/lk social.
+//   * organization, & position (job title), ^ birthday, ~ nickname,
+//   >> relation, ? channel, tg/gh/lk social.
 //
 // Rules:
 //   - All chip patterns operate on single whitespace-separated words.
@@ -22,6 +23,7 @@ export type ChipType =
   | 'phone'
   | 'email'
   | 'organization'
+  | 'position'
   | 'birthday'
   | 'nickname'
   | 'relation'
@@ -35,6 +37,7 @@ export type ChipPayload =
   | { kind: 'phone'; value: string }
   | { kind: 'email'; value: string }
   | { kind: 'organization'; name: string }
+  | { kind: 'position'; value: string }
   | { kind: 'birthday'; date: string } // YYYY-MM-DD
   | { kind: 'nickname'; value: string }
   | { kind: 'relation'; query: string }
@@ -67,6 +70,8 @@ const RE_GROUP = /^\/(\S+)$/
 const RE_PHONE = /^\+([\d\s\-(]{6,})$/
 const RE_EMAIL = /^@(\S+@\S+\.\S+)$/
 const RE_ORG = /^\*(\S+)$/
+// Position / job title: &name (single whitespace-separated word)
+const RE_POSITION = /^&(\S+)$/
 // Birthday DD.MM.YYYY (with year)
 const RE_BDAY_DMY = /^\^(\d{2})\.(\d{2})\.(\d{4})$/
 // Birthday YYYY-MM-DD (with year)
@@ -128,6 +133,16 @@ export function tryCommitToken(text: string): { chip: Chip; remaining: string } 
     const name = mOrg[1] as string
     return {
       chip: { type: 'organization', raw: text, payload: { kind: 'organization', name } },
+      remaining: '',
+    }
+  }
+
+  // Position: &name → Contact.occupation
+  const mPosition = RE_POSITION.exec(text)
+  if (mPosition) {
+    const value = mPosition[1] as string
+    return {
+      chip: { type: 'position', raw: text, payload: { kind: 'position', value } },
       remaining: '',
     }
   }

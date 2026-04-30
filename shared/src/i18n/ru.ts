@@ -29,8 +29,10 @@ export const ru: Dict = {
     birthdays: 'ДР в этом месяце',
     groups: 'Группы',
     tags: 'Теги',
+    organizations: 'Организации',
     trash: 'Корзина',
     saved: 'Сохранённые',
+    hotkeys: 'Горячие клавиши',
   },
   field: {
     given_name: 'Имя',
@@ -84,6 +86,9 @@ export const ru: Dict = {
     replay_guide: 'Показать гайд снова',
     save_filter: 'Сохранить фильтр',
     delete_filter: 'Удалить',
+    added_to_group: 'Добавлено в {name}',
+    added_to_tag: 'Тег #{name}',
+    added_to_organization: 'Связано с {name}',
   },
   prompt: {
     filter_name: 'Название фильтра',
@@ -113,6 +118,7 @@ export const ru: Dict = {
   },
   settings: {
     title: 'Настройки',
+    reset_layout: 'Сбросить ширины панелей',
     tabs: {
       general: 'Общее',
       custom_fields: 'Свои поля',
@@ -158,6 +164,7 @@ export const ru: Dict = {
     touch: 'Зафиксировать контакт',
     search: 'Фокус на поиск',
     help: 'Эта справка',
+    escape: 'Закрыть / очистить',
   },
   event: {
     birthday: 'День рождения',

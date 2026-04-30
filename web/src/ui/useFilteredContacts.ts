@@ -57,6 +57,11 @@ export function useFilteredContacts(contacts: Contact[], filters: ContactFilters
     if (filters.tag) {
       pool = pool.filter((c) => (c.tags ?? []).includes(filters.tag!))
     }
+    if (filters.organization) {
+      pool = pool.filter((c) =>
+        (c.organizations ?? []).some((o) => o.name === filters.organization),
+      )
+    }
 
     return pool
   }, [contacts, filters])
