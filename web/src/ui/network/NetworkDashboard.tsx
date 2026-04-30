@@ -8,12 +8,8 @@
  */
 import { useMemo } from 'react'
 import type { Contact, Interaction, ContactTask } from '@smart-contacts/shared'
-import {
-  computeTodayItems,
-  computeStaleItems,
-  computeWeakeningItems,
-  DEFAULT_STALE_THRESHOLDS,
-} from '@smart-contacts/shared'
+import { computeTodayItems, computeStaleItems, computeWeakeningItems } from '@smart-contacts/shared'
+import type { StaleThresholds } from '../../store/networkSettings'
 import { TodayWidget } from './widgets/TodayWidget'
 import { StaleWidget } from './widgets/StaleWidget'
 import { WeakeningWidget } from './widgets/WeakeningWidget'
@@ -23,6 +19,8 @@ interface Props {
   recentInteractions: Interaction[]
   openTasks: ContactTask[]
   onOpenContact: (id: string) => void
+  /** Stale thresholds from meta settings; passed from SmartContactsApp. */
+  thresholds: StaleThresholds
 }
 
 export function NetworkDashboard({
@@ -30,6 +28,7 @@ export function NetworkDashboard({
   recentInteractions,
   openTasks,
   onOpenContact,
+  thresholds,
 }: Props) {
   const now = new Date()
 
@@ -40,9 +39,9 @@ export function NetworkDashboard({
   )
 
   const stale = useMemo(
-    () => computeStaleItems(contacts, DEFAULT_STALE_THRESHOLDS, now),
+    () => computeStaleItems(contacts, thresholds, now),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [contacts],
+    [contacts, thresholds],
   )
 
   const weakening = useMemo(() => {

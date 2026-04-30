@@ -44,6 +44,7 @@ import {
   type SavedFilter,
 } from './ui/savedFilters'
 import { NetworkDashboard } from './ui/network/NetworkDashboard'
+import { readStaleThresholds } from './store/networkSettings'
 
 export function SmartContactsApp() {
   const dbState = useDb()
@@ -144,6 +145,9 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     setSidebarWidth(SIDEBAR_DEFAULT)
     setDetailWidth(DETAIL_DEFAULT)
   }, [saveMeta])
+
+  // Stale thresholds — read from metaSettings, used by NetworkDashboard.
+  const staleThresholds = useMemo(() => readStaleThresholds(metaSettings), [metaSettings])
 
   // Active top-bar view — persisted in meta so it survives page reload.
   const activeView = useMemo<'contacts' | 'network'>(
@@ -627,6 +631,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
             recentInteractions={recentInteractions}
             openTasks={openTasks}
             onOpenContact={onOpenContact}
+            thresholds={staleThresholds}
           />
         )}
       </div>

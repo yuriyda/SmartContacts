@@ -23,6 +23,7 @@ import { AboutTab } from './settings/AboutTab'
 import { GoogleSyncTab } from './settings/GoogleSyncTab'
 import { OnboardingTab } from './settings/OnboardingTab'
 import { PrivacyTab } from './settings/PrivacyTab'
+import { NetworkTab } from './settings/NetworkTab'
 import { ulid } from '@smart-contacts/shared'
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,7 @@ type TabKey =
   | 'custom_fields'
   | 'backup'
   | 'privacy'
+  | 'network'
   | 'google_sync'
   | 'about'
   | 'onboarding'
@@ -66,6 +68,7 @@ const TABS: { key: TabKey; labelKey: string }[] = [
   { key: 'custom_fields', labelKey: 'settings.tabs.custom_fields' },
   { key: 'backup', labelKey: 'settings.tabs.backup' },
   { key: 'privacy', labelKey: 'settings.tabs.privacy' },
+  { key: 'network', labelKey: 'settings.tabs.network' },
   { key: 'google_sync', labelKey: 'settings.tabs.google_sync' },
   { key: 'about', labelKey: 'settings.tabs.about' },
   { key: 'onboarding', labelKey: 'settings.tabs.onboarding' },
@@ -205,6 +208,7 @@ export function SettingsDialog({
               {tab === 'privacy' && (
                 <PrivacyTab contacts={contacts} upsert={upsert} onToast={addToast} />
               )}
+              {tab === 'network' && <NetworkTab onToast={addToast} />}
               {tab === 'google_sync' && <GoogleSyncTab />}
               {tab === 'about' && <AboutTab onToast={addToast} />}
               {tab === 'onboarding' && <OnboardingTab onResetGuide={onResetGuide} />}
