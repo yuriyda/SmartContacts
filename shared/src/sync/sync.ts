@@ -18,12 +18,24 @@
  *  - No nested db.transaction() calls — importSyncPackage uses ONE outer tx for
  *    all writes, then a separate tx for runLookupGc.
  *  - No `any` except JSON.parse call-sites (type-asserted immediately).
- *  - Column list for CONTACT_INSERT_IGN must stay in sync with COLUMNS in contactsRepo.ts.
+ *  - Column lists (*_COLUMNS) must stay in sync with COLUMNS in the respective Repo.
+ *  - P8.A.3: interactions and contact_tasks are synced using the same Lamport/shouldReplace
+ *    pattern as contacts. SyncPackage fields are optional for backward compatibility.
  */
 
-import type { Contact, CustomFieldDef, SyncPackage, SyncRequest, VectorClock } from '../types'
+import type {
+  Contact,
+  ContactTask,
+  CustomFieldDef,
+  Interaction,
+  SyncPackage,
+  SyncRequest,
+  VectorClock,
+} from '../types'
 import type { DbAdapter } from '../db/adapter'
 import { contactToRow, rowToContact } from '../db/contactRow'
+import { interactionToRow, rowToInteraction } from '../db/interactionRow'
+import { contactTaskToRow, rowToContactTask } from '../db/contactTaskRow'
 import { runLookupGc } from '../db/lookupGc'
 
 // ---------------------------------------------------------------------------
@@ -89,6 +101,73 @@ const CONTACT_INSERT_IGN = `INSERT OR IGNORE INTO contacts (${CONTACT_COL_LIST})
 /** Extract ordered column values from a contact row for binding to CONTACT_INSERT_IGN. */
 function contactRowParams(row: Record<string, unknown>): unknown[] {
   return CONTACT_COLUMNS.map((c: ContactColumnName) =>
+    Object.prototype.hasOwnProperty.call(row, c) ? (row[c] ?? null) : null,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Interaction INSERT column list — keep in sync with COLUMNS in interactionsRepo.ts
+// ---------------------------------------------------------------------------
+
+// NOTE: Mirror DDL column order. Keep in lockstep with interactionsRepo COLUMNS.
+const INTERACTION_COLUMNS = [
+  'id',
+  'contact_id',
+  'at',
+  'channel',
+  'note_md',
+  'created_at',
+  'updated_at',
+  'deleted_at',
+  'lamport_ts',
+  'device_id',
+] as const
+
+type InteractionColumnName = (typeof INTERACTION_COLUMNS)[number]
+
+const INTERACTION_COL_LIST = INTERACTION_COLUMNS.join(', ')
+const INTERACTION_PLACEHOLDERS = INTERACTION_COLUMNS.map(() => '?').join(', ')
+
+/** INSERT OR IGNORE so we never overwrite a newer local interaction on race conditions. */
+const INTERACTION_INSERT_IGN = `INSERT OR IGNORE INTO interactions (${INTERACTION_COL_LIST}) VALUES (${INTERACTION_PLACEHOLDERS})`
+
+/** Extract ordered column values from an interaction row for binding to INTERACTION_INSERT_IGN. */
+function interactionRowParams(row: Record<string, unknown>): unknown[] {
+  return INTERACTION_COLUMNS.map((c: InteractionColumnName) =>
+    Object.prototype.hasOwnProperty.call(row, c) ? (row[c] ?? null) : null,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ContactTask INSERT column list — keep in sync with COLUMNS in contactTasksRepo.ts
+// ---------------------------------------------------------------------------
+
+// NOTE: Mirror DDL column order. Keep in lockstep with contactTasksRepo COLUMNS.
+const CONTACT_TASK_COLUMNS = [
+  'id',
+  'contact_id',
+  'text',
+  'due_at',
+  'priority',
+  'done_at',
+  'created_at',
+  'updated_at',
+  'deleted_at',
+  'lamport_ts',
+  'device_id',
+] as const
+
+type ContactTaskColumnName = (typeof CONTACT_TASK_COLUMNS)[number]
+
+const CONTACT_TASK_COL_LIST = CONTACT_TASK_COLUMNS.join(', ')
+const CONTACT_TASK_PLACEHOLDERS = CONTACT_TASK_COLUMNS.map(() => '?').join(', ')
+
+/** INSERT OR IGNORE so we never overwrite a newer local task on race conditions. */
+const CONTACT_TASK_INSERT_IGN = `INSERT OR IGNORE INTO contact_tasks (${CONTACT_TASK_COL_LIST}) VALUES (${CONTACT_TASK_PLACEHOLDERS})`
+
+/** Extract ordered column values from a contact_tasks row for binding to CONTACT_TASK_INSERT_IGN. */
+function contactTaskRowParams(row: Record<string, unknown>): unknown[] {
+  return CONTACT_TASK_COLUMNS.map((c: ContactTaskColumnName) =>
     Object.prototype.hasOwnProperty.call(row, c) ? (row[c] ?? null) : null,
   )
 }
@@ -207,12 +286,32 @@ export async function computeSyncPackage(
     return ((row['lamport_ts'] as number) ?? 0) > targetKnows
   })
 
+  // interactions: same unseen filter. Tombstones included so deletions propagate.
+  const allInteractions = await db.select<Record<string, unknown>>('SELECT * FROM interactions')
+  const interactionsToSend = allInteractions.filter((row) => {
+    const did = row['device_id'] as string | null | undefined
+    if (!did) return true
+    const targetKnows = targetVC[did] ?? 0
+    return ((row['lamport_ts'] as number) ?? 0) > targetKnows
+  })
+
+  // contact_tasks: same unseen filter. Tombstones included so deletions propagate.
+  const allTasks = await db.select<Record<string, unknown>>('SELECT * FROM contact_tasks')
+  const tasksToSend = allTasks.filter((row) => {
+    const did = row['device_id'] as string | null | undefined
+    if (!did) return true
+    const targetKnows = targetVC[did] ?? 0
+    return ((row['lamport_ts'] as number) ?? 0) > targetKnows
+  })
+
   return {
     type: 'sync_package',
     deviceId: localDeviceId,
     vectorClock: localVC,
     contacts: contactsToSend.map((row) => _rowToContact(row)),
     customFieldDefs: defsToSend.map((row) => _rowToDef(row)),
+    interactions: interactionsToSend.map((row) => rowToInteraction(row)),
+    contactTasks: tasksToSend.map((row) => rowToContactTask(row)),
     // avatars: TODO P5 — avatar blob transport not yet implemented.
     // settings: TODO P5 — per-key LWW not yet implemented; undefined on export.
   }
@@ -244,7 +343,14 @@ export async function importSyncPackage(
   // TODO P5: pkg.settings — full per-key LWW by (lamport, deviceId) not yet implemented.
   //   For now: simple INSERT OR REPLACE merge (last writer wins globally).
 
-  const { deviceId: remoteDeviceId, vectorClock: remoteVC, contacts, customFieldDefs } = pkg
+  const {
+    deviceId: remoteDeviceId,
+    vectorClock: remoteVC,
+    contacts,
+    customFieldDefs,
+    interactions,
+    contactTasks,
+  } = pkg
   void remoteDeviceId
 
   let applied = 0
@@ -401,6 +507,110 @@ export async function importSyncPackage(
       }
     }
 
+    // --- Import interactions (P8.A.3) ----------------------------------------
+    if (interactions && interactions.length > 0) {
+      const localDevRows = await tx.select<{ value: string }>(
+        "SELECT value FROM meta WHERE key='device_id'",
+      )
+      const localDeviceId = localDevRows[0]?.value ?? null
+      let maxImportedLts = 0
+
+      for (const interaction of interactions) {
+        const lts = interaction.lamportTs ?? 0
+        maxImportedLts = Math.max(maxImportedLts, lts)
+
+        const existing = await tx.select<{ lamport_ts: number; device_id: string | null }>(
+          'SELECT lamport_ts, device_id FROM interactions WHERE id = ?',
+          [interaction.id],
+        )
+
+        if (existing.length === 0) {
+          const row = interactionToRow(interaction)
+          const params = interactionRowParams(row)
+          await tx.execute(INTERACTION_INSERT_IGN, params)
+          applied++
+        } else {
+          const local = existing[0]!
+          if (shouldReplace(lts, local.lamport_ts, interaction.deviceId, local.device_id)) {
+            await _fullUpdateInteraction(tx, interaction)
+            applied++
+          } else if (
+            lts === local.lamport_ts &&
+            (interaction.deviceId ?? '') === (local.device_id ?? '')
+          ) {
+            skipped++
+          } else if (
+            lts === (local.lamport_ts ?? 0) &&
+            (interaction.deviceId ?? '') < (local.device_id ?? '')
+          ) {
+            skipped++
+          } else {
+            outdated++
+          }
+        }
+      }
+
+      if (localDeviceId !== null && maxImportedLts > 0) {
+        await tx.execute(
+          `INSERT INTO vector_clock (device_id, counter) VALUES (?, ?)
+           ON CONFLICT(device_id) DO UPDATE SET counter = MAX(counter, ?)`,
+          [localDeviceId, maxImportedLts, maxImportedLts],
+        )
+      }
+    }
+
+    // --- Import contact_tasks (P8.A.3) ----------------------------------------
+    if (contactTasks && contactTasks.length > 0) {
+      const localDevRows = await tx.select<{ value: string }>(
+        "SELECT value FROM meta WHERE key='device_id'",
+      )
+      const localDeviceId = localDevRows[0]?.value ?? null
+      let maxImportedLts = 0
+
+      for (const task of contactTasks) {
+        const lts = task.lamportTs ?? 0
+        maxImportedLts = Math.max(maxImportedLts, lts)
+
+        const existing = await tx.select<{ lamport_ts: number; device_id: string | null }>(
+          'SELECT lamport_ts, device_id FROM contact_tasks WHERE id = ?',
+          [task.id],
+        )
+
+        if (existing.length === 0) {
+          const row = contactTaskToRow(task)
+          const params = contactTaskRowParams(row)
+          await tx.execute(CONTACT_TASK_INSERT_IGN, params)
+          applied++
+        } else {
+          const local = existing[0]!
+          if (shouldReplace(lts, local.lamport_ts, task.deviceId, local.device_id)) {
+            await _fullUpdateTask(tx, task)
+            applied++
+          } else if (
+            lts === local.lamport_ts &&
+            (task.deviceId ?? '') === (local.device_id ?? '')
+          ) {
+            skipped++
+          } else if (
+            lts === (local.lamport_ts ?? 0) &&
+            (task.deviceId ?? '') < (local.device_id ?? '')
+          ) {
+            skipped++
+          } else {
+            outdated++
+          }
+        }
+      }
+
+      if (localDeviceId !== null && maxImportedLts > 0) {
+        await tx.execute(
+          `INSERT INTO vector_clock (device_id, counter) VALUES (?, ?)
+           ON CONFLICT(device_id) DO UPDATE SET counter = MAX(counter, ?)`,
+          [localDeviceId, maxImportedLts, maxImportedLts],
+        )
+      }
+    }
+
     // --- Merge settings (TODO P5: proper per-key LWW by (lamport, deviceId)) ---
     if (pkg.settings) {
       for (const [key, value] of Object.entries(pkg.settings)) {
@@ -461,6 +671,36 @@ async function _fullUpdateContact(tx: DbAdapter, c: Contact): Promise<void> {
   )
   vals.push(c.id)
   await tx.execute(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ?`, vals)
+}
+
+/**
+ * Full update of an interaction row from incoming data (all non-id fields overwritten).
+ * Runs on an already-open tx.
+ */
+async function _fullUpdateInteraction(tx: DbAdapter, i: Interaction): Promise<void> {
+  const row = interactionToRow(i)
+  const sets = INTERACTION_COLUMNS.filter((col) => col !== 'id').map((col) => `${col} = ?`)
+  const vals: unknown[] = INTERACTION_COLUMNS.filter((col) => col !== 'id').map(
+    (col: InteractionColumnName) =>
+      Object.prototype.hasOwnProperty.call(row, col) ? (row[col] ?? null) : null,
+  )
+  vals.push(i.id)
+  await tx.execute(`UPDATE interactions SET ${sets.join(', ')} WHERE id = ?`, vals)
+}
+
+/**
+ * Full update of a contact_tasks row from incoming data (all non-id fields overwritten).
+ * Runs on an already-open tx.
+ */
+async function _fullUpdateTask(tx: DbAdapter, t: ContactTask): Promise<void> {
+  const row = contactTaskToRow(t)
+  const sets = CONTACT_TASK_COLUMNS.filter((col) => col !== 'id').map((col) => `${col} = ?`)
+  const vals: unknown[] = CONTACT_TASK_COLUMNS.filter((col) => col !== 'id').map(
+    (col: ContactTaskColumnName) =>
+      Object.prototype.hasOwnProperty.call(row, col) ? (row[col] ?? null) : null,
+  )
+  vals.push(t.id)
+  await tx.execute(`UPDATE contact_tasks SET ${sets.join(', ')} WHERE id = ?`, vals)
 }
 
 /**

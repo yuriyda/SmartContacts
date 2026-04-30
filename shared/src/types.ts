@@ -167,6 +167,8 @@ export interface SyncPackage {
   vectorClock: VectorClock
   contacts: Contact[]
   customFieldDefs: CustomFieldDef[]
+  interactions?: Interaction[] // P8.A.3 — undefined treated as []
+  contactTasks?: ContactTask[] // P8.A.3 — undefined treated as []
   avatars?: AvatarBlob[]
   settings?: Record<string, string>
 }
