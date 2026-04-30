@@ -1,0 +1,34 @@
+{
+  "name": "smart-contacts",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "lint": "pnpm -r --parallel lint",
+    "typecheck": "pnpm -r --parallel typecheck",
+    "test": "pnpm -r --parallel test",
+    "build": "pnpm -r --parallel build",
+    "dev:web": "pnpm --filter @smart-contacts/web dev",
+    "dev:pwa": "pnpm --filter @smart-contacts/pwa dev",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react": "^7.34.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "prettier": "^3.2.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "lint-staged": {
+    "**/*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ]
+  }
+}
