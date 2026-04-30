@@ -87,4 +87,22 @@ describe('contactRow round-trip', () => {
   test('throws on missing required column', () => {
     expect(() => rowToContact({} as Record<string, unknown>)).toThrow(/missing required/i)
   })
+
+  // P7.T1: protected and hidden boolean flags
+  test('protected:true round-trips as true', () => {
+    const c: Contact = { ...minimal, protected: true }
+    const result = rowToContact(contactToRow(c))
+    expect(result.protected).toBe(true)
+  })
+  test('hidden:true and protected:true both round-trip as true', () => {
+    const c: Contact = { ...minimal, hidden: true, protected: true }
+    const result = rowToContact(contactToRow(c))
+    expect(result.hidden).toBe(true)
+    expect(result.protected).toBe(true)
+  })
+  test('no flags set: protected and hidden are absent from result', () => {
+    const result = rowToContact(contactToRow(minimal))
+    expect(result.protected).toBeUndefined()
+    expect(result.hidden).toBeUndefined()
+  })
 })

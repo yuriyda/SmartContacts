@@ -128,6 +128,8 @@ export interface Contact {
   lastContactedAt?: string | null
   preferredChannel?: string
   priority?: number
+  protected?: boolean
+  hidden?: boolean
   socialDetected?: SocialDetected[]
   reminders?: Reminder[]
   // Google integration

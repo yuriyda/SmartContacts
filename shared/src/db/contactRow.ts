@@ -140,6 +140,8 @@ export function contactToRow(c: Contact): Record<string, unknown> {
     custom_fields: encObject(c.customFields as Record<string, unknown> | undefined),
     preferred_channel: encText(c.preferredChannel),
     priority: c.priority !== undefined ? c.priority : null,
+    protected: c.protected ? 1 : 0,
+    hidden: c.hidden ? 1 : 0,
     social_detected: encArray(c.socialDetected),
     reminders: encArray(c.reminders),
     created_at: c.createdAt,
@@ -231,6 +233,11 @@ export function rowToContact(row: Record<string, unknown>): Contact {
 
   // priority: optional integer
   if (row['priority'] != null) contact.priority = row['priority'] as number
+
+  // protected / hidden: INTEGER 0/1 — set only when truthy (1); omit when 0/null/undefined.
+  // This satisfies exactOptionalPropertyTypes: never assign false, only true or omit.
+  if (row['protected']) contact.protected = true
+  if (row['hidden']) contact.hidden = true
 
   // Nullable text fields: null must be preserved (distinct from undefined/absent)
   const deletedAt = nullableText('deleted_at')

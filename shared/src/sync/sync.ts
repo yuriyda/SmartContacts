@@ -63,6 +63,8 @@ const CONTACT_COLUMNS = [
   'last_contacted_at',
   'preferred_channel',
   'priority',
+  'protected',
+  'hidden',
   'social_detected',
   'reminders',
   'google_resource_name',

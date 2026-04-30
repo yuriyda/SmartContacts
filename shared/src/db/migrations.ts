@@ -29,6 +29,8 @@ const v1: string[] = [
      last_contacted_at   TEXT,
      preferred_channel   TEXT,
      priority            INTEGER,
+     protected           INTEGER NOT NULL DEFAULT 0,
+     hidden              INTEGER NOT NULL DEFAULT 0,
      social_detected     TEXT,
      reminders           TEXT,
      google_resource_name TEXT, google_etag TEXT, google_last_synced_at TEXT,
