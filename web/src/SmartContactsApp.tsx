@@ -808,6 +808,48 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
   useKeyboard([
     { combo: 'cmd+n', handler: handleAdd, description: 'hotkey.add' },
     { combo: 'cmd+,', handler: () => setSettingsOpen((o) => !o), description: 'hotkey.settings' },
+    {
+      combo: 'cmd+shift+z',
+      handler: async () => {
+        const action = undoStore.future[undoStore.future.length - 1]
+        if (!action) {
+          push(t('undo.empty_redo'))
+          return
+        }
+        await undoable.applyRedo(action)
+        undoStore.popRedo()
+        push(`${t('undo.toast_redone')}: ${t(`undo.kind.${action.kind}`)}`)
+      },
+      description: 'hotkey.redo',
+    },
+    {
+      combo: 'ctrl+y',
+      handler: async () => {
+        const action = undoStore.future[undoStore.future.length - 1]
+        if (!action) {
+          push(t('undo.empty_redo'))
+          return
+        }
+        await undoable.applyRedo(action)
+        undoStore.popRedo()
+        push(`${t('undo.toast_redone')}: ${t(`undo.kind.${action.kind}`)}`)
+      },
+      description: 'hotkey.redo',
+    },
+    {
+      combo: 'cmd+z',
+      handler: async () => {
+        const action = undoStore.past[undoStore.past.length - 1]
+        if (!action) {
+          push(t('undo.empty'))
+          return
+        }
+        await undoable.applyUndo(action)
+        undoStore.popUndo()
+        push(`${t('undo.toast_done')}: ${t(`undo.kind.${action.kind}`)}`)
+      },
+      description: 'hotkey.undo',
+    },
     { combo: 'j', handler: () => navigate(1), description: 'hotkey.next' },
     { combo: 'k', handler: () => navigate(-1), description: 'hotkey.prev' },
     { combo: 'e', handler: handleEdit, description: 'hotkey.edit' },

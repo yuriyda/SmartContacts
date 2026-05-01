@@ -15,6 +15,8 @@ interface HotkeyHelpProps {
 const ROWS = [
   ['Ctrl/Cmd+N', 'hotkey.add'],
   ['Ctrl/Cmd+,', 'hotkey.settings'],
+  ['Ctrl/Cmd+Z', 'hotkey.undo'],
+  ['Ctrl/Cmd+Shift+Z', 'hotkey.redo'],
   ['j', 'hotkey.next'],
   ['k', 'hotkey.prev'],
   ['e', 'hotkey.edit'],

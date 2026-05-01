@@ -242,6 +242,8 @@ export const en = {
   hotkey: {
     add: 'Add contact',
     settings: 'Open settings',
+    undo: 'Undo last action',
+    redo: 'Redo',
     next: 'Next contact',
     prev: 'Previous contact',
     edit: 'Edit selected',
@@ -310,6 +312,27 @@ export const en = {
     due_label: 'Due',
     show_done: 'Show {n} done',
     hide_done: 'Hide done',
+  },
+  undo: {
+    toast_done: 'Undone',
+    toast_redone: 'Redone',
+    empty: 'Nothing to undo',
+    empty_redo: 'Nothing to redo',
+    kind: {
+      create: 'create contact',
+      softDelete: 'delete contact',
+      restore: 'restore contact',
+      edit: 'edit contact',
+      touch: 'touch contact',
+      flagToggle: 'toggle flag',
+      interactionUpsert: 'log interaction',
+      interactionSoftDelete: 'delete interaction',
+      taskUpsert: 'edit task',
+      taskMarkDone: 'complete task',
+      taskReopen: 'reopen task',
+      taskSoftDelete: 'delete task',
+      bulk: 'bulk action',
+    },
   },
 }
 export type Dict = typeof en
