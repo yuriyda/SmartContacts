@@ -6,6 +6,9 @@
 // ExportOptions.includeHidden controls whether hidden contacts appear in the export bundle.
 // Default is false (hidden contacts are excluded); pass { includeHidden: true } for full export.
 //
+// ExportOptions.idsFilter, when provided, restricts the exported contacts to only those whose
+// id is in the set. Both filters are applied together (intersection).
+//
 // Rules:
 //  - All importBackup writes MUST run inside db.transaction().
 //  - version !== 1 is rejected before any DB access.
@@ -27,6 +30,11 @@ import { contactToRow, rowToContact } from './contactRow'
 export interface ExportOptions {
   /** When true, hidden contacts are included in the export. Default: false. */
   includeHidden?: boolean
+  /**
+   * When set, only contacts whose id is in this set are exported.
+   * Applied in addition to the includeHidden filter (intersection).
+   */
+  idsFilter?: ReadonlySet<string>
 }
 
 export interface BackupBundle {
@@ -156,7 +164,11 @@ export async function exportBackup(db: DbAdapter, opts?: ExportOptions): Promise
   // SELECT all contacts including deleted (lossless backup).
   const contactRows = await db.select<Record<string, unknown>>('SELECT * FROM contacts')
   // Filter hidden contacts unless explicitly included via opts.
-  const contacts = contactRows.map(rowToContact).filter((c) => opts?.includeHidden || !c.hidden)
+  // Apply idsFilter when provided (intersection with includeHidden filter).
+  const contacts = contactRows
+    .map(rowToContact)
+    .filter((c) => opts?.includeHidden || !c.hidden)
+    .filter((c) => !opts?.idsFilter || opts.idsFilter.has(c.id))
 
   // SELECT all custom field defs including deleted.
   const defRows = await db.select<Record<string, unknown>>('SELECT * FROM custom_field_defs')

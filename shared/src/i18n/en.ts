@@ -126,6 +126,7 @@ export const en = {
     add_group_prompt: 'Group name to apply:',
     set_priority_prompt: 'New priority (1..5):',
     done: 'Applied to {n} contact(s)',
+    invalid_priority: 'Invalid priority — must be 1..5',
   },
   prompt: {
     filter_name: 'Filter name',

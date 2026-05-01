@@ -19,6 +19,7 @@ import {
   applyMultiSelect,
   modeFromEvent,
 } from '@smart-contacts/shared'
+import { exportBackup } from '@smart-contacts/shared'
 import { AppProvider, useApp } from './ui/AppContext'
 import { useDb } from './store/useDb'
 import { useContacts } from './store/useContacts'
@@ -39,6 +40,7 @@ import { HotkeyHelp } from './ui/HotkeyHelp'
 import { ToastContainer } from './ui/common'
 import { useToasts } from './ui/useToasts'
 import { useConfirm } from './ui/useConfirm'
+import { usePrompt } from './ui/usePrompt'
 import { useKeyboard } from './ui/useKeyboard'
 import { useFilteredContacts } from './ui/useFilteredContacts'
 import { DEFAULT_FILTERS } from './ui/filterTypes'
@@ -257,6 +259,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
 
   const { toasts, push, dismiss } = useToasts()
   const { confirm, Mount: ConfirmMount } = useConfirm()
+  const { prompt, Mount: PromptMount } = usePrompt()
 
   const onSaveFilter = useCallback(async () => {
     const name = window.prompt(t('prompt.filter_name'))
@@ -275,6 +278,133 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     },
     [saveMeta, savedFilters],
   )
+
+  // ---------------------------------------------------------------------------
+  // Bulk handlers (P9.T7)
+  // ---------------------------------------------------------------------------
+
+  // Helper: iterate selectedIds, run a per-contact mutator, then clear selection.
+  const forEachSelected = useCallback(
+    async <T,>(mutator: (c: Contact) => Promise<T> | T): Promise<number> => {
+      let count = 0
+      for (const id of selectedIds) {
+        const c = contacts.find((x) => x.id === id)
+        if (!c) continue
+        await mutator(c)
+        count++
+      }
+      setSelectedIds(new Set())
+      return count
+    },
+    [selectedIds, contacts],
+  )
+
+  const onBulkDelete = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    for (const id of ids) await softDelete(id)
+    setSelectedIds(new Set())
+    push(t('confirm.delete_title'), {
+      action: {
+        label: t('actions.restore'),
+        onClick: () => {
+          for (const id of ids) void restore(id)
+        },
+      },
+      duration: 6000,
+    })
+  }, [selectedIds, softDelete, restore, push, t])
+
+  const onBulkRestore = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    for (const id of ids) await restore(id)
+    setSelectedIds(new Set())
+    push(t('bulk.done', { n: String(ids.length) }))
+  }, [selectedIds, restore, push, t])
+
+  const onBulkHide = useCallback(async () => {
+    const n = await forEachSelected(async (c) => {
+      if (!c.hidden) await upsert({ ...c, hidden: true })
+    })
+    push(t('bulk.done', { n: String(n) }))
+  }, [forEachSelected, upsert, push, t])
+
+  const onBulkUnhide = useCallback(async () => {
+    const n = await forEachSelected(async (c) => {
+      if (c.hidden) await upsert({ ...c, hidden: false })
+    })
+    push(t('bulk.done', { n: String(n) }))
+  }, [forEachSelected, upsert, push, t])
+
+  const onBulkProtect = useCallback(async () => {
+    const n = await forEachSelected(async (c) => {
+      if (!c.protected) await upsert({ ...c, protected: true })
+    })
+    push(t('bulk.done', { n: String(n) }))
+  }, [forEachSelected, upsert, push, t])
+
+  const onBulkUnprotect = useCallback(async () => {
+    const n = await forEachSelected(async (c) => {
+      if (c.protected) await upsert({ ...c, protected: false })
+    })
+    push(t('bulk.done', { n: String(n) }))
+  }, [forEachSelected, upsert, push, t])
+
+  const onBulkTouch = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    for (const id of ids) await touch(id)
+    setSelectedIds(new Set())
+    push(t('bulk.done', { n: String(ids.length) }))
+  }, [selectedIds, touch, push, t])
+
+  const onBulkAddTag = useCallback(async () => {
+    const tag = await prompt({ title: t('bulk.add_tag_prompt') })
+    if (!tag) return
+    const n = await forEachSelected(async (c) => {
+      const updated = addContactToTag(c, tag)
+      if (updated !== c) await upsert(updated)
+    })
+    push(t('bulk.done', { n: String(n) }))
+  }, [prompt, forEachSelected, upsert, push, t])
+
+  const onBulkAddToGroup = useCallback(async () => {
+    const name = await prompt({ title: t('bulk.add_group_prompt') })
+    if (!name) return
+    const id = name.toLowerCase().replace(/\s+/g, '_')
+    const n = await forEachSelected(async (c) => {
+      const updated = addContactToGroup(c, { id, name })
+      if (updated !== c) await upsert(updated)
+    })
+    push(t('bulk.done', { n: String(n) }))
+  }, [prompt, forEachSelected, upsert, push, t])
+
+  const onBulkSetPriority = useCallback(async () => {
+    const raw = await prompt({ title: t('bulk.set_priority_prompt'), placeholder: '1..5' })
+    if (!raw) return
+    const p = parseInt(raw, 10)
+    if (!Number.isFinite(p) || p < 1 || p > 5) {
+      push(t('bulk.invalid_priority'))
+      return
+    }
+    const priority = p as 1 | 2 | 3 | 4 | 5
+    const n = await forEachSelected(async (c) => {
+      if (c.priority !== priority) await upsert({ ...c, priority })
+    })
+    push(t('bulk.done', { n: String(n) }))
+  }, [prompt, forEachSelected, upsert, push, t])
+
+  const onBulkExport = useCallback(async () => {
+    if (!dbState.db) return
+    const bundle = await exportBackup(dbState.db, { idsFilter: selectedIds, includeHidden: true })
+    const json = JSON.stringify(bundle, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `smart-contacts-selection-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    push(t('bulk.done', { n: String(selectedIds.size) }))
+  }, [dbState.db, selectedIds, push, t])
 
   // Hotkey-bound search input ref
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -697,17 +827,17 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
                 <BulkActionBar
                   count={selectedIds.size}
                   scope={filters.scope}
-                  onDelete={() => console.warn('TODO P9.T7: bulk delete')}
-                  onRestore={() => console.warn('TODO P9.T7: bulk restore')}
-                  onHide={() => console.warn('TODO P9.T7: bulk hide')}
-                  onUnhide={() => console.warn('TODO P9.T7: bulk unhide')}
-                  onProtect={() => console.warn('TODO P9.T7: bulk protect')}
-                  onUnprotect={() => console.warn('TODO P9.T7: bulk unprotect')}
-                  onTouch={() => console.warn('TODO P9.T7: bulk touch')}
-                  onAddTag={() => console.warn('TODO P9.T7: bulk add tag')}
-                  onAddToGroup={() => console.warn('TODO P9.T7: bulk add to group')}
-                  onSetPriority={() => console.warn('TODO P9.T7: bulk set priority')}
-                  onExport={() => console.warn('TODO P9.T7: bulk export')}
+                  onDelete={() => void onBulkDelete()}
+                  onRestore={() => void onBulkRestore()}
+                  onHide={() => void onBulkHide()}
+                  onUnhide={() => void onBulkUnhide()}
+                  onProtect={() => void onBulkProtect()}
+                  onUnprotect={() => void onBulkUnprotect()}
+                  onTouch={() => void onBulkTouch()}
+                  onAddTag={() => void onBulkAddTag()}
+                  onAddToGroup={() => void onBulkAddToGroup()}
+                  onSetPriority={() => void onBulkSetPriority()}
+                  onExport={() => void onBulkExport()}
                   onClear={() => setSelectedIds(new Set())}
                 />
               )}
@@ -806,6 +936,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       <HotkeyHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ToastContainer toasts={toasts} onDismiss={dismiss} />
       {ConfirmMount}
+      {PromptMount}
     </div>
   )
 }

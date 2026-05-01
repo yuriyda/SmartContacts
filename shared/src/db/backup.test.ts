@@ -185,4 +185,86 @@ describe('backup', () => {
     expect(names).toContain('HiddenThree')
     await db.close()
   })
+
+  test('exportBackup with idsFilter exports only the matching contact', async () => {
+    const db = await fresh('backup-idsFilter-single')
+    const did = await getDeviceId(db)
+    const repo = makeContactsRepo(db, did)
+
+    const id1 = ulid()
+    const id2 = ulid()
+    await repo.upsert({
+      id: id1,
+      createdAt: '',
+      updatedAt: '',
+      lamportTs: 0,
+      deviceId: did,
+      displayName: 'Alpha',
+    } as Contact)
+    await repo.upsert({
+      id: id2,
+      createdAt: '',
+      updatedAt: '',
+      lamportTs: 0,
+      deviceId: did,
+      displayName: 'Beta',
+    } as Contact)
+
+    const bundle = await exportBackup(db, { idsFilter: new Set([id1]) })
+    expect(bundle.contacts.length).toBe(1)
+    expect(bundle.contacts[0]?.id).toBe(id1)
+    await db.close()
+  })
+
+  test('exportBackup with empty idsFilter exports zero contacts', async () => {
+    const db = await fresh('backup-idsFilter-empty')
+    const did = await getDeviceId(db)
+    const repo = makeContactsRepo(db, did)
+
+    await repo.upsert({
+      id: ulid(),
+      createdAt: '',
+      updatedAt: '',
+      lamportTs: 0,
+      deviceId: did,
+      displayName: 'Gamma',
+    } as Contact)
+
+    const bundle = await exportBackup(db, { idsFilter: new Set() })
+    expect(bundle.contacts.length).toBe(0)
+    await db.close()
+  })
+
+  test('exportBackup with idsFilter AND includeHidden applies both filters (intersection)', async () => {
+    const db = await fresh('backup-idsFilter-hidden')
+    const did = await getDeviceId(db)
+    const repo = makeContactsRepo(db, did)
+
+    const id1 = ulid()
+    const id2 = ulid()
+    await repo.upsert({
+      id: id1,
+      createdAt: '',
+      updatedAt: '',
+      lamportTs: 0,
+      deviceId: did,
+      displayName: 'HiddenA',
+      hidden: true,
+    } as Contact)
+    await repo.upsert({
+      id: id2,
+      createdAt: '',
+      updatedAt: '',
+      lamportTs: 0,
+      deviceId: did,
+      displayName: 'HiddenB',
+      hidden: true,
+    } as Contact)
+
+    // Only id1 is in the filter, both are hidden but includeHidden: true
+    const bundle = await exportBackup(db, { idsFilter: new Set([id1]), includeHidden: true })
+    expect(bundle.contacts.length).toBe(1)
+    expect(bundle.contacts[0]?.id).toBe(id1)
+    await db.close()
+  })
 })

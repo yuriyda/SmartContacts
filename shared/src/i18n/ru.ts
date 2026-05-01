@@ -128,6 +128,7 @@ export const ru: Dict = {
     add_group_prompt: 'Название группы:',
     set_priority_prompt: 'Новый приоритет (1..5):',
     done: 'Применено к {n} контактам',
+    invalid_priority: 'Неверный приоритет — нужно 1..5',
   },
   prompt: {
     filter_name: 'Название фильтра',
