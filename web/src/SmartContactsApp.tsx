@@ -227,9 +227,12 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
   )
   const resetFilters = useCallback(() => setFilters(DEFAULT_FILTERS), [])
 
-  // Network dashboard: clicking a widget row navigates to the contact in Contacts view
+  // Network dashboard: clicking a widget row navigates to the contact in Contacts view.
+  // Resets filters so the target contact is guaranteed to appear in MainList regardless
+  // of the prior scope/group/tag/org/search filter state.
   const onOpenContact = useCallback(
     (id: string) => {
+      setFilters(DEFAULT_FILTERS)
       setSelectedId(id)
       void saveMeta('active_view_v1', 'contacts')
     },
