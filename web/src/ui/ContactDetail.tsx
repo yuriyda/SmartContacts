@@ -41,6 +41,7 @@ import {
 } from './icons'
 import { InteractionComposer } from './InteractionComposer'
 import { TaskComposer } from './TaskComposer'
+import type { ConfirmOptions } from './useConfirm'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,6 +70,8 @@ export interface ContactDetailProps {
   onTaskMarkDone?: (id: string, doneAt: string) => Promise<void>
   onTaskReopen?: (id: string) => Promise<void>
   onTaskSoftDelete?: (id: string) => Promise<void>
+  /** Promise-based confirm function threaded from SmartContactsApp to avoid mounting a second dialog host. */
+  confirm?: (opts: ConfirmOptions) => Promise<boolean>
 }
 
 // ---------------------------------------------------------------------------
@@ -254,10 +257,12 @@ function InteractionRow({
   interaction,
   onEdit,
   onDelete,
+  confirm,
 }: {
   interaction: Interaction
   onEdit: (edited: Interaction) => void
   onDelete: () => void
+  confirm?: (opts: ConfirmOptions) => Promise<boolean>
 }) {
   const { TC, t, locale } = useApp()
   const [expanded, setExpanded] = useState(false)
@@ -345,17 +350,20 @@ function InteractionRow({
             </button>
             <button
               type="button"
-              onClick={(e) => {
+              onClick={async (e) => {
                 e.stopPropagation()
-                if (
-                  window.confirm(
-                    t('confirm.delete_interaction_title') +
-                      '\n' +
-                      t('confirm.delete_interaction_body'),
-                  )
-                ) {
-                  onDelete()
-                }
+                const ok = confirm
+                  ? await confirm({
+                      title: t('confirm.delete_interaction_title'),
+                      body: t('confirm.delete_interaction_body'),
+                      destructive: true,
+                    })
+                  : window.confirm(
+                      t('confirm.delete_interaction_title') +
+                        '\n' +
+                        t('confirm.delete_interaction_body'),
+                    )
+                if (ok) onDelete()
               }}
               className="text-xs px-2 py-0.5 rounded text-red-400 hover:text-red-300"
             >
@@ -390,11 +398,13 @@ function TaskRow({
   onToggleDone,
   onEdit,
   onDelete,
+  confirm,
 }: {
   task: ContactTask
   onToggleDone: () => void
   onEdit: (draft: { text: string; dueAt?: string; priority?: 1 | 2 | 3 | 4 | 5 }) => void
   onDelete: () => void
+  confirm?: (opts: ConfirmOptions) => Promise<boolean>
 }) {
   const { TC, t } = useApp()
   const [expanded, setExpanded] = useState(false)
@@ -487,11 +497,16 @@ function TaskRow({
           </button>
           <button
             type="button"
-            onClick={(e) => {
+            onClick={async (e) => {
               e.stopPropagation()
-              if (window.confirm(t('confirm.delete_task_title'))) {
-                onDelete()
-              }
+              const ok = confirm
+                ? await confirm({
+                    title: t('confirm.delete_task_title'),
+                    body: t('confirm.delete_task_body'),
+                    destructive: true,
+                  })
+                : window.confirm(t('confirm.delete_task_title'))
+              if (ok) onDelete()
             }}
             className="text-xs px-2 py-0.5 rounded text-red-400 hover:text-red-300"
           >
@@ -527,6 +542,7 @@ export function ContactDetail({
   onTaskMarkDone,
   onTaskReopen,
   onTaskSoftDelete,
+  confirm,
 }: ContactDetailProps) {
   const { TC, t, locale } = useApp()
   const [composerOpen, setComposerOpen] = useState(false)
@@ -868,6 +884,7 @@ export function ContactDetail({
               interaction={i}
               onEdit={(edited) => void onInteractionUpsert?.(edited)}
               onDelete={() => void onInteractionSoftDelete?.(i.id)}
+              {...(confirm !== undefined ? { confirm } : {})}
             />
           ))}
           {!composerOpen && (
@@ -926,6 +943,7 @@ export function ContactDetail({
                 void onTaskUpsert?.(edited)
               }}
               onDelete={() => void onTaskSoftDelete?.(tk.id)}
+              {...(confirm !== undefined ? { confirm } : {})}
             />
           ))}
           {doneTasks.length > 0 && (
@@ -957,6 +975,7 @@ export function ContactDetail({
                   void onTaskUpsert?.(edited)
                 }}
                 onDelete={() => void onTaskSoftDelete?.(tk.id)}
+                {...(confirm !== undefined ? { confirm } : {})}
               />
             ))}
           {!taskComposerOpen && (

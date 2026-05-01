@@ -135,6 +135,11 @@ export const en = {
     delete_interaction_title: 'Delete this interaction?',
     delete_interaction_body: 'The entry will be soft-deleted and can re-appear after sync.',
     delete_task_title: 'Delete task?',
+    delete_task_body: 'The task will be soft-deleted.',
+    unprotect_title: 'Remove protection?',
+    hide_title: 'Hide contact?',
+    protect_delete_title: 'Delete protected contact?',
+    protect_edit_title: 'Save changes to protected contact?',
   },
   demo: {
     load_en: 'Load demo data (English)',

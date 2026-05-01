@@ -36,6 +36,7 @@ import { GuideOverlay } from './ui/GuideOverlay'
 import { HotkeyHelp } from './ui/HotkeyHelp'
 import { ToastContainer } from './ui/common'
 import { useToasts } from './ui/useToasts'
+import { useConfirm } from './ui/useConfirm'
 import { useKeyboard } from './ui/useKeyboard'
 import { useFilteredContacts } from './ui/useFilteredContacts'
 import { DEFAULT_FILTERS } from './ui/filterTypes'
@@ -241,6 +242,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
   const setAllFilters = useCallback((next: ContactFilters) => setFilters(next), [])
 
   const { toasts, push, dismiss } = useToasts()
+  const { confirm, Mount: ConfirmMount } = useConfirm()
 
   const onSaveFilter = useCallback(async () => {
     const name = window.prompt(t('prompt.filter_name'))
@@ -287,7 +289,11 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       if (original?.protected) {
         const changed = countChangedFields(original, c)
         if (changed > 0) {
-          const ok = window.confirm(t('confirm.protect_edit_summary', { n: changed }))
+          const ok = await confirm({
+            title: t('confirm.protect_edit_title'),
+            body: t('confirm.protect_edit_summary', { n: changed }),
+            destructive: false,
+          })
           if (!ok) return
         }
       }
@@ -309,7 +315,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       setEditing({ open: false, contact: null })
       setSelectedId(c.id)
     },
-    [contacts, upsert, t],
+    [contacts, upsert, t, confirm],
   )
 
   // ---------------------------------------------------------------------------
@@ -465,7 +471,11 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       const c = contacts.find((x) => x.id === id)
       if (!c) return
       if (c.protected) {
-        const ok = window.confirm(t('confirm.protect_delete_body', { name: c.displayName ?? '' }))
+        const ok = await confirm({
+          title: t('confirm.protect_delete_title'),
+          body: t('confirm.protect_delete_body', { name: c.displayName ?? '' }),
+          destructive: true,
+        })
         if (!ok) return
       }
       await softDelete(id)
@@ -474,31 +484,39 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
         duration: 5000,
       })
     },
-    [contacts, softDelete, push, t, restore],
+    [contacts, softDelete, push, t, restore, confirm],
   )
 
   const onToggleProtect = useCallback(
     async (c: Contact) => {
       // No confirm to PROTECT (low-stakes). Confirm to UNPROTECT.
       if (c.protected) {
-        const ok = window.confirm(t('confirm.unprotect_body', { name: c.displayName ?? '' }))
+        const ok = await confirm({
+          title: t('confirm.unprotect_title'),
+          body: t('confirm.unprotect_body', { name: c.displayName ?? '' }),
+          destructive: true,
+        })
         if (!ok) return
       }
       await upsert({ ...c, protected: !c.protected })
     },
-    [upsert, t],
+    [upsert, t, confirm],
   )
 
   const onToggleHide = useCallback(
     async (c: Contact) => {
       // Confirm to HIDE; no confirm to UNHIDE.
       if (!c.hidden) {
-        const ok = window.confirm(t('confirm.hide_body', { name: c.displayName ?? '' }))
+        const ok = await confirm({
+          title: t('confirm.hide_title'),
+          body: t('confirm.hide_body', { name: c.displayName ?? '' }),
+          destructive: true,
+        })
         if (!ok) return
       }
       await upsert({ ...c, hidden: !c.hidden })
     },
-    [upsert, t],
+    [upsert, t, confirm],
   )
 
   // j/k navigation through filtered list
@@ -664,6 +682,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
               onTaskMarkDone={markTaskDone}
               onTaskReopen={reopenTask}
               onTaskSoftDelete={softDeleteTask}
+              confirm={confirm}
             />
           </>
         ) : (
@@ -712,6 +731,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       <GuideOverlay open={guideOpen} onDismiss={dismissGuide} />
       <HotkeyHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ToastContainer toasts={toasts} onDismiss={dismiss} />
+      {ConfirmMount}
     </div>
   )
 }

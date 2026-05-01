@@ -137,6 +137,11 @@ export const ru: Dict = {
     delete_interaction_body:
       'Запись будет помечена удалённой; может вернуться после синхронизации.',
     delete_task_title: 'Удалить задачу?',
+    delete_task_body: 'Задача будет помечена удалённой.',
+    unprotect_title: 'Снять защиту?',
+    hide_title: 'Скрыть контакт?',
+    protect_delete_title: 'Удалить защищённый контакт?',
+    protect_edit_title: 'Сохранить изменения?',
   },
   demo: {
     load_en: 'Загрузить демо (англ.)',
