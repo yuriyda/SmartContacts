@@ -14,7 +14,13 @@ import { Users } from 'lucide-react'
 interface MainListProps {
   contacts: Contact[]
   selectedId: string | null
-  onSelect: (id: string) => void
+  selectedIds: ReadonlySet<string>
+  /** Called on mouse click — receives event for multi-select mode detection. */
+  onSelect: (id: string, e: React.MouseEvent) => void
+  /** Called when checkbox is clicked — always toggles regardless of modifiers. */
+  onToggleSelection: (id: string, e: React.MouseEvent) => void
+  /** Called by keyboard j/k navigation — always single-select. */
+  onNavigate: (id: string) => void
   onTouch: (id: string) => void
   onSoftDelete: (id: string) => void
   onOpenEdit: (id: string) => void
@@ -24,7 +30,10 @@ interface MainListProps {
 export function MainList({
   contacts,
   selectedId,
+  selectedIds,
   onSelect,
+  onToggleSelection,
+  onNavigate,
   onTouch,
   onSoftDelete,
   onOpenEdit,
@@ -52,12 +61,12 @@ export function MainList({
       e.preventDefault()
       const next = Math.min(currentIndex + 1, contacts.length - 1)
       const contact = contacts[next]
-      if (contact) onSelect(contact.id)
+      if (contact) onNavigate(contact.id)
     } else if (e.key === 'k' || e.key === 'ArrowUp') {
       e.preventDefault()
       const prev = Math.max(currentIndex - 1, 0)
       const contact = contacts[prev]
-      if (contact) onSelect(contact.id)
+      if (contact) onNavigate(contact.id)
     }
   }
 
@@ -74,7 +83,10 @@ export function MainList({
           key={c.id}
           contact={c}
           selected={c.id === selectedId}
-          onSelect={() => onSelect(c.id)}
+          multiSelected={selectedIds.has(c.id)}
+          anySelected={selectedIds.size > 0}
+          onSelect={(e) => onSelect(c.id, e)}
+          onToggleSelection={(e) => onToggleSelection(c.id, e)}
           onTouch={() => onTouch(c.id)}
           onSoftDelete={() => onSoftDelete(c.id)}
           onOpenEdit={onOpenEdit}

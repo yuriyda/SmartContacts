@@ -16,6 +16,8 @@ import {
   addContactToTag,
   addContactToOrganization,
   countChangedFields,
+  applyMultiSelect,
+  modeFromEvent,
 } from '@smart-contacts/shared'
 import { AppProvider, useApp } from './ui/AppContext'
 import { useDb } from './store/useDb'
@@ -189,6 +191,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
   // ---------------------------------------------------------------------------
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState(new Set<string>())
 
   // Per-contact interaction journal (P8.B.1)
   const {
@@ -206,6 +209,12 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     softDelete: softDeleteTask,
   } = useContactTasks(dbState.tasksRepo, selectedId)
   const [filters, setFilters] = useState<ContactFilters>(DEFAULT_FILTERS)
+
+  // Reset multi-select when any filter dimension changes.
+  useEffect(() => {
+    setSelectedIds(new Set())
+  }, [filters.scope, filters.group, filters.tag, filters.organization, filters.search])
+
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [editing, setEditing] = useState<{ open: boolean; contact: Contact | null }>({
     open: false,
@@ -523,6 +532,35 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     [upsert, t, confirm],
   )
 
+  // Multi-select row click handler (Shift / Ctrl+Cmd support)
+  const onSelectRow = useCallback(
+    (id: string, e: React.MouseEvent) => {
+      const mode = modeFromEvent(e)
+      const orderedIds = filtered.map((c) => c.id)
+      const result = applyMultiSelect(
+        { prev: selectedIds, anchor: selectedId, id, orderedIds },
+        mode,
+      )
+      setSelectedIds(result.next)
+      setSelectedId(result.nextAnchor)
+    },
+    [selectedIds, selectedId, filtered],
+  )
+
+  // Checkbox toggle: always uses 'toggle' mode regardless of modifiers
+  const onToggleSelection = useCallback(
+    (id: string, _e: React.MouseEvent) => {
+      const orderedIds = filtered.map((c) => c.id)
+      const result = applyMultiSelect(
+        { prev: selectedIds, anchor: selectedId, id, orderedIds },
+        'toggle',
+      )
+      setSelectedIds(result.next)
+      setSelectedId(result.nextAnchor)
+    },
+    [selectedIds, selectedId, filtered],
+  )
+
   // j/k navigation through filtered list
   const navigate = useCallback(
     (delta: 1 | -1) => {
@@ -561,6 +599,11 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     {
       combo: 'esc',
       handler: () => {
+        // Priority 0: clear multi-selection when more than one item is selected.
+        if (selectedIds.size > 1) {
+          setSelectedIds(new Set())
+          return
+        }
         if (helpOpen) {
           setHelpOpen(false)
           return
@@ -653,7 +696,10 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
                 <MainList
                   contacts={filtered}
                   selectedId={selectedId}
-                  onSelect={setSelectedId}
+                  selectedIds={selectedIds}
+                  onSelect={onSelectRow}
+                  onToggleSelection={onToggleSelection}
+                  onNavigate={setSelectedId}
                   onTouch={(id) => void touch(id)}
                   onSoftDelete={(id) => void handleSoftDelete(id)}
                   onOpenEdit={handleOpenEdit}

@@ -19,7 +19,13 @@ import { Lock, EyeOff } from './icons'
 interface ContactRowProps {
   contact: Contact
   selected: boolean
-  onSelect: () => void
+  /** True when this row is included in the multi-select set. */
+  multiSelected?: boolean
+  /** True when any row in the list is selected (controls checkbox visibility). */
+  anySelected?: boolean
+  onSelect: (e: React.MouseEvent) => void
+  /** Called when the checkbox is clicked — always toggles, ignoring keyboard modifiers. */
+  onToggleSelection?: (e: React.MouseEvent) => void
   onTouch?: () => void
   onSoftDelete?: () => void
   onOpenEdit?: (id: string) => void
@@ -28,7 +34,10 @@ interface ContactRowProps {
 export function ContactRow({
   contact,
   selected,
+  multiSelected = false,
+  anySelected = false,
   onSelect,
+  onToggleSelection,
   onTouch: _onTouch,
   onSoftDelete: _onSoftDelete,
   onOpenEdit,
@@ -58,6 +67,13 @@ export function ContactRow({
     : 0
   const stars = Math.round(score / 20)
 
+  // Determine row highlight: anchor selected takes priority, then multi-selected background.
+  const rowBg = selected
+    ? 'bg-sky-600/20 text-sky-100'
+    : multiSelected
+      ? `bg-sky-600/10 ${TC.textSec}`
+      : `${TC.textSec} ${TC.hoverBg}`
+
   return (
     <div
       onClick={onSelect}
@@ -65,7 +81,8 @@ export function ContactRow({
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
-          onSelect()
+          // Synthesise a plain mouse event for keyboard activation (single-select)
+          onSelect(e as unknown as React.MouseEvent)
         }
       }}
       role="button"
@@ -78,11 +95,26 @@ export function ContactRow({
         },
       })}
       className={[
-        'flex items-center gap-3 px-3 cursor-pointer transition-colors outline-none',
+        'group flex items-center gap-3 px-3 cursor-pointer transition-colors outline-none',
         density === 'compact' ? 'py-1' : 'py-2',
-        selected ? 'bg-sky-600/20 text-sky-100' : `${TC.textSec} ${TC.hoverBg}`,
+        rowBg,
       ].join(' ')}
     >
+      {/* Checkbox: always visible when any row is multi-selected; otherwise hover-only */}
+      <input
+        type="checkbox"
+        checked={multiSelected}
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggleSelection?.(e)
+        }}
+        onChange={() => undefined}
+        aria-label="Select contact"
+        className={[
+          'flex-shrink-0 cursor-pointer rounded accent-sky-500',
+          anySelected || multiSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+        ].join(' ')}
+      />
       <ContactAvatar id={contact.id} name={name} size={avatarSize} />
 
       <div className="flex-1 min-w-0">

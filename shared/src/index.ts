@@ -44,6 +44,13 @@ export {
   shouldFireNow,
   type NotificationContent,
 } from './core/networkNotifications'
+export {
+  applyMultiSelect,
+  modeFromEvent,
+  type SelectionMode,
+  type SelectionInput,
+  type SelectionResult,
+} from './core/selection'
 export * from './parse/quickEntryContacts'
 export * from './sync/sync'
 export * from './sync/syncEngine'
