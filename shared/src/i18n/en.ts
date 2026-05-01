@@ -114,6 +114,18 @@ export const en = {
     unhide: 'Unhide',
     log_interaction: 'Log interaction',
     add_task: 'Add task',
+    add_tag: 'Add tag…',
+    add_to_group: 'Add to group…',
+    set_priority: 'Set priority…',
+    export_selected: 'Export…',
+    clear_selection: 'Clear selection',
+  },
+  bulk: {
+    selected: 'Selected: {n}',
+    add_tag_prompt: 'Tag name to apply:',
+    add_group_prompt: 'Group name to apply:',
+    set_priority_prompt: 'New priority (1..5):',
+    done: 'Applied to {n} contact(s)',
   },
   prompt: {
     filter_name: 'Filter name',

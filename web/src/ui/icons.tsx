@@ -42,6 +42,7 @@ export {
   Upload,
   Info,
   Keyboard,
+  Eye,
   EyeOff,
   Lock,
   ListChecks,

@@ -51,6 +51,7 @@ import {
 } from './ui/savedFilters'
 import { NetworkDashboard } from './ui/network/NetworkDashboard'
 import { CenterTabBar } from './ui/CenterTabBar'
+import { BulkActionBar } from './ui/BulkActionBar'
 import { readStaleThresholds } from './store/networkSettings'
 
 export function SmartContactsApp() {
@@ -690,9 +691,27 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
         )}
         <div className="flex-1 flex flex-col min-w-0">
           <CenterTabBar activeView={activeView} onChangeView={onChangeView} />
-          <div className="flex-1 flex min-h-0">
-            {activeView === 'contacts' ? (
-              <>
+          {activeView === 'contacts' ? (
+            <>
+              {selectedIds.size >= 2 && (
+                <BulkActionBar
+                  count={selectedIds.size}
+                  scope={filters.scope}
+                  onDelete={() => console.warn('TODO P9.T7: bulk delete')}
+                  onRestore={() => console.warn('TODO P9.T7: bulk restore')}
+                  onHide={() => console.warn('TODO P9.T7: bulk hide')}
+                  onUnhide={() => console.warn('TODO P9.T7: bulk unhide')}
+                  onProtect={() => console.warn('TODO P9.T7: bulk protect')}
+                  onUnprotect={() => console.warn('TODO P9.T7: bulk unprotect')}
+                  onTouch={() => console.warn('TODO P9.T7: bulk touch')}
+                  onAddTag={() => console.warn('TODO P9.T7: bulk add tag')}
+                  onAddToGroup={() => console.warn('TODO P9.T7: bulk add to group')}
+                  onSetPriority={() => console.warn('TODO P9.T7: bulk set priority')}
+                  onExport={() => console.warn('TODO P9.T7: bulk export')}
+                  onClear={() => setSelectedIds(new Set())}
+                />
+              )}
+              <div className="flex-1 flex min-h-0">
                 <MainList
                   contacts={filtered}
                   selectedId={selectedId}
@@ -735,8 +754,10 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
                   onTaskSoftDelete={softDeleteTask}
                   confirm={confirm}
                 />
-              </>
-            ) : (
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 flex min-h-0">
               <NetworkDashboard
                 contacts={filtered}
                 recentInteractions={recentInteractions}
@@ -744,8 +765,8 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
                 onOpenContact={onOpenContact}
                 thresholds={staleThresholds}
               />
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
 

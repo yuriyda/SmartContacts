@@ -116,6 +116,18 @@ export const ru: Dict = {
     unhide: 'Показать',
     log_interaction: 'Записать взаимодействие',
     add_task: 'Новая задача',
+    add_tag: 'Добавить тег…',
+    add_to_group: 'Добавить в группу…',
+    set_priority: 'Сменить приоритет…',
+    export_selected: 'Экспорт…',
+    clear_selection: 'Снять выделение',
+  },
+  bulk: {
+    selected: 'Выбрано: {n}',
+    add_tag_prompt: 'Тег для добавления:',
+    add_group_prompt: 'Название группы:',
+    set_priority_prompt: 'Новый приоритет (1..5):',
+    done: 'Применено к {n} контактам',
   },
   prompt: {
     filter_name: 'Название фильтра',
