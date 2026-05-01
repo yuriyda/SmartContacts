@@ -18,7 +18,7 @@ const ROWS = [
   ['j', 'hotkey.next'],
   ['k', 'hotkey.prev'],
   ['e', 'hotkey.edit'],
-  ['d', 'hotkey.delete'],
+  ['Del', 'hotkey.delete'],
   ['t', 'hotkey.touch'],
   ['/', 'hotkey.search'],
   ['?', 'hotkey.help'],

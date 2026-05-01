@@ -543,7 +543,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     { combo: 'k', handler: () => navigate(-1), description: 'hotkey.prev' },
     { combo: 'e', handler: handleEdit, description: 'hotkey.edit' },
     {
-      combo: 'd',
+      combo: 'delete',
       handler: () => selectedId && void handleSoftDelete(selectedId),
       description: 'hotkey.delete',
     },
