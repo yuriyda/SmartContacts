@@ -55,6 +55,8 @@ import { NetworkDashboard } from './ui/network/NetworkDashboard'
 import { CenterTabBar } from './ui/CenterTabBar'
 import { BulkActionBar } from './ui/BulkActionBar'
 import { readStaleThresholds } from './store/networkSettings'
+import { useUndoStore } from './store/undoStore'
+import { useUndoableActions } from './store/useUndoableActions'
 
 export function SmartContactsApp() {
   const dbState = useDb()
@@ -211,6 +213,28 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     reopen: reopenTask,
     softDelete: softDeleteTask,
   } = useContactTasks(dbState.tasksRepo, selectedId)
+
+  // ---------------------------------------------------------------------------
+  // Undo / Redo store + recorder (P9.T8)
+  // ---------------------------------------------------------------------------
+  const undoStore = useUndoStore()
+  const undoable = useUndoableActions({
+    contacts,
+    upsert,
+    softDelete,
+    restore,
+    touch,
+    upsertInteraction,
+    softDeleteInteraction,
+    upsertTask,
+    markTaskDone,
+    reopenTask,
+    softDeleteTask,
+    getInteraction: (id) => contactInteractions.find((i) => i.id === id),
+    getTask: (id) => contactTasks.find((t) => t.id === id),
+    store: undoStore,
+  })
+
   const [filters, setFilters] = useState<ContactFilters>(DEFAULT_FILTERS)
 
   // Reset multi-select when any filter dimension changes.
@@ -301,7 +325,15 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
 
   const onBulkDelete = useCallback(async () => {
     const ids = Array.from(selectedIds)
-    for (const id of ids) await softDelete(id)
+    // Capture snapshots before deletion so the bulk UndoAction can restore each contact.
+    const children: import('./store/undoStore').UndoAction[] = []
+    for (const id of ids) {
+      const c = contacts.find((x) => x.id === id)
+      if (!c) continue
+      await softDelete(id)
+      children.push({ kind: 'softDelete', contact: c })
+    }
+    undoStore.push({ kind: 'bulk', children })
     setSelectedIds(new Set())
     push(t('confirm.delete_title'), {
       action: {
@@ -312,70 +344,124 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       },
       duration: 6000,
     })
-  }, [selectedIds, softDelete, restore, push, t])
+  }, [selectedIds, contacts, softDelete, restore, undoStore, push, t])
 
   const onBulkRestore = useCallback(async () => {
     const ids = Array.from(selectedIds)
-    for (const id of ids) await restore(id)
+    const children: import('./store/undoStore').UndoAction[] = []
+    for (const id of ids) {
+      await restore(id)
+      children.push({ kind: 'restore', id })
+    }
+    undoStore.push({ kind: 'bulk', children })
     setSelectedIds(new Set())
     push(t('bulk.done', { n: String(ids.length) }))
-  }, [selectedIds, restore, push, t])
+  }, [selectedIds, restore, undoStore, push, t])
 
   const onBulkHide = useCallback(async () => {
+    const children: import('./store/undoStore').UndoAction[] = []
     const n = await forEachSelected(async (c) => {
-      if (!c.hidden) await upsert({ ...c, hidden: true })
+      if (!c.hidden) {
+        await upsert({ ...c, hidden: true })
+        children.push({ kind: 'flagToggle', id: c.id, field: 'hidden', prev: false, next: true })
+      }
     })
+    undoStore.push({ kind: 'bulk', children })
     push(t('bulk.done', { n: String(n) }))
-  }, [forEachSelected, upsert, push, t])
+  }, [forEachSelected, upsert, undoStore, push, t])
 
   const onBulkUnhide = useCallback(async () => {
+    const children: import('./store/undoStore').UndoAction[] = []
     const n = await forEachSelected(async (c) => {
-      if (c.hidden) await upsert({ ...c, hidden: false })
+      if (c.hidden) {
+        await upsert({ ...c, hidden: false })
+        children.push({ kind: 'flagToggle', id: c.id, field: 'hidden', prev: true, next: false })
+      }
     })
+    undoStore.push({ kind: 'bulk', children })
     push(t('bulk.done', { n: String(n) }))
-  }, [forEachSelected, upsert, push, t])
+  }, [forEachSelected, upsert, undoStore, push, t])
 
   const onBulkProtect = useCallback(async () => {
+    const children: import('./store/undoStore').UndoAction[] = []
     const n = await forEachSelected(async (c) => {
-      if (!c.protected) await upsert({ ...c, protected: true })
+      if (!c.protected) {
+        await upsert({ ...c, protected: true })
+        children.push({
+          kind: 'flagToggle',
+          id: c.id,
+          field: 'protected',
+          prev: false,
+          next: true,
+        })
+      }
     })
+    undoStore.push({ kind: 'bulk', children })
     push(t('bulk.done', { n: String(n) }))
-  }, [forEachSelected, upsert, push, t])
+  }, [forEachSelected, upsert, undoStore, push, t])
 
   const onBulkUnprotect = useCallback(async () => {
+    const children: import('./store/undoStore').UndoAction[] = []
     const n = await forEachSelected(async (c) => {
-      if (c.protected) await upsert({ ...c, protected: false })
+      if (c.protected) {
+        await upsert({ ...c, protected: false })
+        children.push({
+          kind: 'flagToggle',
+          id: c.id,
+          field: 'protected',
+          prev: true,
+          next: false,
+        })
+      }
     })
+    undoStore.push({ kind: 'bulk', children })
     push(t('bulk.done', { n: String(n) }))
-  }, [forEachSelected, upsert, push, t])
+  }, [forEachSelected, upsert, undoStore, push, t])
 
   const onBulkTouch = useCallback(async () => {
     const ids = Array.from(selectedIds)
-    for (const id of ids) await touch(id)
+    const children: import('./store/undoStore').UndoAction[] = []
+    for (const id of ids) {
+      const c = contacts.find((x) => x.id === id)
+      const prev = c?.lastContactedAt ?? undefined
+      await touch(id)
+      children.push({ kind: 'touch', id, prevLastContactedAt: prev })
+    }
+    undoStore.push({ kind: 'bulk', children })
     setSelectedIds(new Set())
     push(t('bulk.done', { n: String(ids.length) }))
-  }, [selectedIds, touch, push, t])
+  }, [selectedIds, contacts, touch, undoStore, push, t])
 
   const onBulkAddTag = useCallback(async () => {
     const tag = await prompt({ title: t('bulk.add_tag_prompt') })
     if (!tag) return
+    const children: import('./store/undoStore').UndoAction[] = []
     const n = await forEachSelected(async (c) => {
       const updated = addContactToTag(c, tag)
-      if (updated !== c) await upsert(updated)
+      if (updated !== c) {
+        await upsert(updated)
+        children.push({ kind: 'edit', before: c, after: updated })
+      }
     })
+    undoStore.push({ kind: 'bulk', children })
     push(t('bulk.done', { n: String(n) }))
-  }, [prompt, forEachSelected, upsert, push, t])
+  }, [prompt, forEachSelected, upsert, undoStore, push, t])
 
   const onBulkAddToGroup = useCallback(async () => {
     const name = await prompt({ title: t('bulk.add_group_prompt') })
     if (!name) return
     const id = name.toLowerCase().replace(/\s+/g, '_')
+    const children: import('./store/undoStore').UndoAction[] = []
     const n = await forEachSelected(async (c) => {
       const updated = addContactToGroup(c, { id, name })
-      if (updated !== c) await upsert(updated)
+      if (updated !== c) {
+        await upsert(updated)
+        children.push({ kind: 'edit', before: c, after: updated })
+      }
     })
+    undoStore.push({ kind: 'bulk', children })
     push(t('bulk.done', { n: String(n) }))
-  }, [prompt, forEachSelected, upsert, push, t])
+  }, [prompt, forEachSelected, upsert, undoStore, push, t])
 
   const onBulkSetPriority = useCallback(async () => {
     const raw = await prompt({ title: t('bulk.set_priority_prompt'), placeholder: '1..5' })
@@ -386,11 +472,16 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       return
     }
     const priority = p as 1 | 2 | 3 | 4 | 5
+    const children: import('./store/undoStore').UndoAction[] = []
     const n = await forEachSelected(async (c) => {
-      if (c.priority !== priority) await upsert({ ...c, priority })
+      if (c.priority !== priority) {
+        await upsert({ ...c, priority })
+        children.push({ kind: 'edit', before: c, after: { ...c, priority } })
+      }
     })
+    undoStore.push({ kind: 'bulk', children })
     push(t('bulk.done', { n: String(n) }))
-  }, [prompt, forEachSelected, upsert, push, t])
+  }, [prompt, forEachSelected, upsert, undoStore, push, t])
 
   const onBulkExport = useCallback(async () => {
     if (!dbState.db) return
@@ -441,8 +532,14 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
           if (!ok) return
         }
       }
-      await upsert(c)
-      // Mirror rule: ensure each internal relation partner has a back-link to c
+      // Record create vs edit depending on whether contact already exists.
+      if (original) {
+        await undoable.recordEdit(original, c)
+      } else {
+        await undoable.recordCreate(c)
+      }
+      // Mirror rule: ensure each internal relation partner has a back-link to c.
+      // Back-links are recorded individually as edits (minor, but traceable).
       for (const rel of c.relationsInternal ?? []) {
         const partner = contacts.find((x) => x.id === rel.contactId)
         if (!partner) continue
@@ -450,16 +547,17 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
         if (!has) {
           const backLink =
             rel.type !== undefined ? { contactId: c.id, type: rel.type } : { contactId: c.id }
-          await upsert({
+          const updated = {
             ...partner,
             relationsInternal: [...(partner.relationsInternal ?? []), backLink],
-          })
+          }
+          await undoable.recordEdit(partner, updated)
         }
       }
       setEditing({ open: false, contact: null })
       setSelectedId(c.id)
     },
-    [contacts, upsert, t, confirm],
+    [contacts, undoable, t, confirm],
   )
 
   // ---------------------------------------------------------------------------
@@ -472,10 +570,10 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       if (!c) return
       const updated = addContactToGroup(c, group)
       if (updated === c) return // idempotent — already a member, silent no-op
-      await upsert(updated)
+      await undoable.recordEdit(c, updated)
       push(t('actions.added_to_group', { name: group.name ?? group.id }))
     },
-    [contacts, upsert, push, t],
+    [contacts, undoable, push, t],
   )
 
   const onDropContactOnTag = useCallback(
@@ -484,10 +582,10 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       if (!c) return
       const updated = addContactToTag(c, tagName)
       if (updated === c) return // idempotent — already tagged, silent no-op
-      await upsert(updated)
+      await undoable.recordEdit(c, updated)
       push(t('actions.added_to_tag', { name: tagName }))
     },
-    [contacts, upsert, push, t],
+    [contacts, undoable, push, t],
   )
 
   const onDropContactOnOrganization = useCallback(
@@ -496,10 +594,10 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
       if (!c) return
       const updated = addContactToOrganization(c, orgName)
       if (updated === c) return // idempotent — already linked, silent no-op
-      await upsert(updated)
+      await undoable.recordEdit(c, updated)
       push(t('actions.added_to_organization', { name: orgName }))
     },
-    [contacts, upsert, push, t],
+    [contacts, undoable, push, t],
   )
 
   // Merge QuickEntry chips into a Contact object.
@@ -622,13 +720,15 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
         })
         if (!ok) return
       }
-      await softDelete(id)
+      // recordSoftDelete captures the contact snapshot then soft-deletes.
+      // Toast restore button calls restore() directly (intentional — not via recorder).
+      await undoable.recordSoftDelete(id)
       push(t('confirm.delete_title'), {
         action: { label: t('actions.restore'), onClick: () => void restore(id) },
         duration: 5000,
       })
     },
-    [contacts, softDelete, push, t, restore, confirm],
+    [contacts, undoable, push, t, restore, confirm],
   )
 
   const onToggleProtect = useCallback(
@@ -642,9 +742,9 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
         })
         if (!ok) return
       }
-      await upsert({ ...c, protected: !c.protected })
+      await undoable.recordToggleFlag(c, 'protected')
     },
-    [upsert, t, confirm],
+    [undoable, t, confirm],
   )
 
   const onToggleHide = useCallback(
@@ -658,9 +758,9 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
         })
         if (!ok) return
       }
-      await upsert({ ...c, hidden: !c.hidden })
+      await undoable.recordToggleFlag(c, 'hidden')
     },
-    [upsert, t, confirm],
+    [undoable, t, confirm],
   )
 
   // Multi-select row click handler (Shift / Ctrl+Cmd support)
@@ -718,7 +818,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
     },
     {
       combo: 't',
-      handler: () => selectedId && void touch(selectedId),
+      handler: () => selectedId && void undoable.recordTouch(selectedId),
       description: 'hotkey.touch',
     },
     {
@@ -849,7 +949,7 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
                   onSelect={onSelectRow}
                   onToggleSelection={onToggleSelection}
                   onNavigate={setSelectedId}
-                  onTouch={(id) => void touch(id)}
+                  onTouch={(id) => void undoable.recordTouch(id)}
                   onSoftDelete={(id) => void handleSoftDelete(id)}
                   onOpenEdit={handleOpenEdit}
                   loading={loading}
@@ -869,19 +969,19 @@ function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
                   onEdit={handleEdit}
                   onToggleProtect={onToggleProtect}
                   onToggleHide={onToggleHide}
-                  onTouch={() => selectedId && void touch(selectedId)}
+                  onTouch={() => selectedId && void undoable.recordTouch(selectedId)}
                   onDelete={() => selectedId && void handleSoftDelete(selectedId)}
-                  onRestore={() => selectedId && void restore(selectedId)}
+                  onRestore={() => selectedId && void undoable.recordRestore(selectedId)}
                   onSelectContact={setSelectedId}
                   width={detailWidth}
                   interactions={contactInteractions}
-                  onInteractionUpsert={upsertInteraction}
-                  onInteractionSoftDelete={softDeleteInteraction}
+                  onInteractionUpsert={(i) => undoable.recordInteractionUpsert(i)}
+                  onInteractionSoftDelete={(id) => undoable.recordInteractionSoftDelete(id)}
                   tasks={contactTasks}
-                  onTaskUpsert={upsertTask}
-                  onTaskMarkDone={markTaskDone}
-                  onTaskReopen={reopenTask}
-                  onTaskSoftDelete={softDeleteTask}
+                  onTaskUpsert={(t) => undoable.recordTaskUpsert(t)}
+                  onTaskMarkDone={(id, doneAt) => undoable.recordTaskMarkDone(id, doneAt)}
+                  onTaskReopen={(id) => undoable.recordTaskReopen(id)}
+                  onTaskSoftDelete={(id) => undoable.recordTaskSoftDelete(id)}
                   confirm={confirm}
                 />
               </div>
