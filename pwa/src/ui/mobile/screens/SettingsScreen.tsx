@@ -1,9 +1,10 @@
 /**
  * @file SettingsScreen.tsx
- * Mobile settings. Minimal scope (§22.5): theme + locale + sync + demo data.
+ * Mobile settings. Minimal scope (§22.5): theme + locale + sync + notifications + demo data.
  *
  * Sync is foreground-only (§22.6). For T5 the "Sync now" button shows a message
  * indicating sync wiring is deferred (no Google OAuth on mobile yet).
+ * Notifications (§22.7): daily LocalNotifications scheduling via useMobileNotifications.
  *
  * Rules:
  *  - No Network dashboard, no Hidden scope (spec §22.5).
@@ -16,9 +17,51 @@ import type { DbState } from '@smart-contacts/web'
 import { useApp } from '@smart-contacts/web/ui/AppContext'
 
 export function SettingsScreen({ dbState }: { dbState: DbState }) {
-  const { theme, setTheme, mode, setMode, locale, setLocale, db, deviceId, saveMeta } = useApp()
+  const {
+    theme,
+    setTheme,
+    mode,
+    setMode,
+    locale,
+    setLocale,
+    db,
+    deviceId,
+    saveMeta,
+    metaSettings,
+  } = useApp()
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+
+  const notifEnabled = metaSettings.notifications_enabled_v1 === '1'
+  const notifyHour = parseInt(metaSettings.notify_time_v1 ?? '9', 10)
+
+  const onToggleNotif = async (next: boolean) => {
+    if (next) {
+      const { requestPermissionAndSchedule } = await import('../../../store/useMobileNotifications')
+      const r = await requestPermissionAndSchedule({ hour: notifyHour })
+      if (!r.ok) {
+        setMsg(`Notifications failed: ${r.reason ?? 'unknown'}`)
+        return
+      }
+      await saveMeta('notifications_enabled_v1', '1')
+      setMsg('Daily reminder enabled')
+    } else {
+      const { cancelDailyNotification } = await import('../../../store/useMobileNotifications')
+      await cancelDailyNotification()
+      await saveMeta('notifications_enabled_v1', '0')
+      setMsg('Daily reminder disabled')
+    }
+  }
+
+  const onChangeHour = async (h: number) => {
+    await saveMeta('notify_time_v1', String(h))
+    if (notifEnabled) {
+      // Reschedule with new hour
+      const { requestPermissionAndSchedule } = await import('../../../store/useMobileNotifications')
+      await requestPermissionAndSchedule({ hour: h })
+      setMsg(`Time updated to ${String(h).padStart(2, '0')}:00`)
+    }
+  }
 
   void dbState // dbState.db is accessed via useApp().db (same singleton)
 
@@ -91,6 +134,30 @@ export function SettingsScreen({ dbState }: { dbState: DbState }) {
           >
             Sync now
           </button>
+        </Section>
+
+        <Section title="Notifications">
+          <Row label="Daily reminder">
+            <input
+              type="checkbox"
+              checked={notifEnabled}
+              onChange={(e) => void onToggleNotif(e.target.checked)}
+            />
+          </Row>
+          <Row label="Time">
+            <select
+              value={notifyHour}
+              onChange={(e) => void onChangeHour(parseInt(e.target.value, 10))}
+              disabled={!notifEnabled}
+              className="px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-slate-100 disabled:opacity-50"
+            >
+              {Array.from({ length: 24 }, (_, h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, '0')}:00
+                </option>
+              ))}
+            </select>
+          </Row>
         </Section>
 
         <Section title="Demo data">
