@@ -2,8 +2,16 @@
  * @file SmartContactsApp.tsx
  * Top-level shell: opens the DB via useDb (outside AppProvider), then renders ScreenBody
  * which wires contacts, filters, selection state, dialogs, hotkeys, toasts, and onboarding.
- * Rules: useDb must be called OUTSIDE AppProvider so db can be injected as a prop.
- * No DB access directly in this file — all mutations go through useContacts.
+ *
+ * SmartContactsShell — accepts a DbState prop so any persistence backend (wa-sqlite for web,
+ * tauri-plugin-sql for desktop, or future Capacitor SQLite for mobile) can inject its state.
+ * SmartContactsApp — thin wrapper that calls useDb() and hands off to SmartContactsShell.
+ *
+ * Rules:
+ *  - useDb must be called OUTSIDE AppProvider so db can be injected as a prop.
+ *  - SmartContactsShell must NOT call useDb internally — tree-shaking must be able to
+ *    exclude the wa-sqlite backend from the Tauri bundle.
+ *  - No DB access directly in this file — all mutations go through useContacts.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Contact, CustomFieldDef, GroupMembership } from '@smart-contacts/shared'
@@ -22,6 +30,7 @@ import {
 import { exportBackup } from '@smart-contacts/shared'
 import { AppProvider, useApp } from './ui/AppContext'
 import { useDb } from './store/useDb'
+import type { DbState } from './store/dbState'
 import { useContacts } from './store/useContacts'
 import { useNetworkData, useOpenTasks } from './store/useNetworkData'
 import { useNotificationScheduler } from './store/useNotificationScheduler'
@@ -58,8 +67,13 @@ import { readStaleThresholds } from './store/networkSettings'
 import { useUndoStore } from './store/undoStore'
 import { useUndoableActions } from './store/useUndoableActions'
 
-export function SmartContactsApp() {
-  const dbState = useDb()
+/**
+ * SmartContactsShell — platform-agnostic entry point.
+ * Accepts a pre-initialised DbState so any persistence backend can drive the tree.
+ * Tree-shaking: this component does NOT import useDb, keeping wa-sqlite out of
+ * bundles that only import SmartContactsShell (e.g. the Tauri frontend).
+ */
+export function SmartContactsShell({ dbState }: { dbState: DbState }) {
   return (
     <AppProvider
       db={dbState.db}
@@ -72,7 +86,16 @@ export function SmartContactsApp() {
   )
 }
 
-function ScreenBody({ dbState }: { dbState: ReturnType<typeof useDb> }) {
+/**
+ * SmartContactsApp — thin web entry point.
+ * Boots wa-sqlite via useDb() and hands the result to SmartContactsShell.
+ */
+export function SmartContactsApp() {
+  const dbState = useDb()
+  return <SmartContactsShell dbState={dbState} />
+}
+
+function ScreenBody({ dbState }: { dbState: DbState }) {
   const {
     TC,
     t,

@@ -30,23 +30,14 @@ import {
   makeInteractionsRepo,
   makeContactTasksRepo,
   type DbAdapter,
-  type ContactsRepo,
-  type CustomFieldDefsRepo,
-  type InteractionsRepo,
-  type ContactTasksRepo,
 } from '@smart-contacts/shared'
+import type { DbState } from '@smart-contacts/web'
 
-export interface UseTauriDbResult {
-  db: DbAdapter | null
-  deviceId: string | null
-  contactsRepo: ContactsRepo | null
-  defsRepo: CustomFieldDefsRepo | null
-  interactionsRepo: InteractionsRepo | null
-  tasksRepo: ContactTasksRepo | null
-}
+// Re-export for backwards compat.
+export type { DbState as UseTauriDbResult }
 
-export function useTauriDb(): UseTauriDbResult {
-  const [state, setState] = useState<UseTauriDbResult>({
+export function useTauriDb(): DbState {
+  const [state, setState] = useState<DbState>({
     db: null,
     deviceId: null,
     contactsRepo: null,

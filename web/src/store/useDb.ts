@@ -17,23 +17,14 @@ import {
   makeInteractionsRepo,
   makeContactTasksRepo,
   type DbAdapter,
-  type ContactsRepo,
-  type CustomFieldDefsRepo,
-  type InteractionsRepo,
-  type ContactTasksRepo,
 } from '@smart-contacts/shared'
+import type { DbState } from './dbState'
 
-export interface UseDbResult {
-  db: DbAdapter | null
-  deviceId: string | null
-  contactsRepo: ContactsRepo | null
-  defsRepo: CustomFieldDefsRepo | null
-  interactionsRepo: InteractionsRepo | null
-  tasksRepo: ContactTasksRepo | null
-}
+// Re-export for backwards compat — external code that imported UseDbResult still compiles.
+export type { DbState as UseDbResult }
 
-export function useDb(): UseDbResult {
-  const [state, setState] = useState<UseDbResult>({
+export function useDb(): DbState {
+  const [state, setState] = useState<DbState>({
     db: null,
     deviceId: null,
     contactsRepo: null,
