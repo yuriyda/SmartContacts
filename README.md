@@ -89,7 +89,69 @@ Output:
 
 ## PWA (mobile, Android)
 
-See `docs/superpowers/plans/2026-05-02-p11-pwa-mobile.md` (P11) for the in-progress plan. Build instructions land in P11.T8.
+Capacitor 6 wrapping a Vite-built React PWA. Distinct mobile shell with stack navigation, BottomNav, and limited feature scope (no bulk operations, no undo/redo, no Network dashboard) per spec §22.5.
+
+### Prerequisites
+
+- Java JDK 17+ (matches Capacitor 6 / Android Gradle Plugin requirements).
+- Android SDK + Android Studio (latest stable).
+- Android NDK if building release variants with native side.
+
+### Web preview (no Android tooling required)
+
+```bash
+pnpm dev:pwa
+```
+
+Opens `http://localhost:5174/`. Capacitor SQLite plugin falls back to a web implementation; LocalNotifications falls back to the browser Notification API. Useful for UI iteration without device.
+
+### First-time Android scaffold
+
+```bash
+pnpm --filter @smart-contacts/pwa build      # produces dist/
+cd pwa
+npx cap add android                          # one-time; requires Java JDK + Android SDK
+```
+
+This generates `pwa/android/` (gitignore it locally; it is regenerated from `dist/` + native plugins).
+
+### Sync changes to native project
+
+After every code change you want to test on device:
+
+```bash
+pnpm --filter @smart-contacts/pwa build
+cd pwa
+npx cap sync android
+```
+
+### Open in Android Studio
+
+```bash
+cd pwa
+npx cap open android
+```
+
+Then build and run on an emulator or connected device from Android Studio's Run menu.
+
+### Smoke checklist (Android device or emulator)
+
+1. App opens on `/list` — empty state shows "No contacts yet. Tap + to add."
+2. FAB → fill form → Save → contact appears in list.
+3. Tap row → DetailScreen opens with full info.
+4. Edit → change name → Save → list updates.
+5. Delete → confirm → contact gone from list.
+6. Search tab → type query → live filter works.
+7. Settings tab → toggle Daily reminder ON → permission prompt → grant.
+8. Wait for the configured hour OR set hour to current → native Android notification fires.
+9. Settings → Load 50 demo contacts → list populates.
+10. Reload app — state persists in native SQLite (not IndexedDB).
+
+### Known limitations (first iteration)
+
+- Mobile UI does NOT include: bulk operations, multi-select, undo/redo, Network dashboard, Hidden scope, sidebar filters, custom field editing, all phone/email/address types beyond primary.
+- Sync (Google Drive) is not wired on mobile in v1 — "Sync now" button is a placeholder.
+- iOS not supported in v1.
 
 ## Architecture notes
 
