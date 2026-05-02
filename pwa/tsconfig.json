@@ -4,13 +4,14 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
+    "noEmit": true,
     "jsx": "react-jsx",
     "paths": {
       "@shared/*": ["../shared/src/*"],
       "@smart-contacts/shared": ["../shared/src/index.ts"],
       "@smart-contacts/shared/*": ["../shared/*"],
       "@smart-contacts/web": ["../web/src/index.ts"],
-      "@smart-contacts/web/*": ["../web/*"]
+      "@smart-contacts/web/*": ["../web/src/*"]
     }
   },
   "include": ["src/**/*"],

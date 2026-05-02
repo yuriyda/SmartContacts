@@ -31,7 +31,15 @@ export default defineConfig({
       },
     }),
   ],
-  resolve: { alias: { '@shared': path.resolve(__dirname, '../shared/src') } },
+  resolve: {
+    alias: {
+      '@shared': path.resolve(__dirname, '../shared/src'),
+      // Map @smart-contacts/web to the source tree so deep imports (e.g. /ui/AppContext)
+      // resolve correctly in Vite without relying on the pnpm symlink + exports map.
+      '@smart-contacts/web': path.resolve(__dirname, '../web/src'),
+      '@smart-contacts/shared': path.resolve(__dirname, '../shared/src'),
+    },
+  },
   // See web/vite.config.ts: pre-bundling wa-sqlite breaks WASM URL resolution in dev.
   optimizeDeps: { exclude: ['wa-sqlite'] },
   server: { port: 5174 },
