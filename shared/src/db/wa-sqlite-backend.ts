@@ -2,6 +2,13 @@
 // DbAdapter implementation backed by wa-sqlite (synchronous build) with an in-memory VFS.
 // Persistence is achieved by saving/loading a raw database file snapshot via snapshot-store.ts.
 //
+// IMPORTANT: This file is NOT part of the @smart-contacts/shared public API.
+// It is an internal/test-only and web-only entry point.
+// Web targets import it via the deep path:
+//   import { openWaSqliteAdapter } from '@smart-contacts/shared/src/db/wa-sqlite-backend'
+// Tests in shared/ import it via relative path.
+// Do NOT re-export from shared/src/index.ts.
+//
 // Rules for editing:
 //  - Do NOT change the DbAdapter contract (select/execute/transaction/close).
 //  - Do NOT switch to the async wa-sqlite build without updating the VFS accordingly.

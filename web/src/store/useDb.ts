@@ -7,8 +7,8 @@
 // resolved (state was set). Without the ref the post-setDb adapter would leak
 // on every StrictMode double-mount and on production unmount.
 import { useEffect, useRef, useState } from 'react'
+import { openWaSqliteAdapter } from '@smart-contacts/shared/src/db/wa-sqlite-backend'
 import {
-  openWaSqliteAdapter,
   applyMigrations,
   initDevice,
   getDeviceId,

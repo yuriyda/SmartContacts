@@ -1,6 +1,13 @@
 // snapshot-store.ts
 // Provides lightweight IndexedDB persistence for raw database snapshots.
 // Only edit this file to change snapshot storage mechanics — not the adapter contract.
+//
+// IMPORTANT: This file is NOT part of the @smart-contacts/shared public API.
+// It is an internal/test-only entry point used by wa-sqlite-backend.ts and shared/ tests.
+// Web targets import it via the deep path if needed:
+//   import { loadSnapshot, saveSnapshot } from '@smart-contacts/shared/src/db/snapshot-store'
+// Do NOT re-export from shared/src/index.ts.
+//
 // Rules:
 //  - Database name: "smart-contacts-snapshots"
 //  - Object store name: "snapshots"

@@ -2,14 +2,8 @@
 // Boots the wa-sqlite adapter inline (no separate hook for the PWA's tiny surface yet)
 // — adapter is held in useRef so cleanup can close it on unmount/StrictMode double-mount.
 import { useEffect, useRef, useState } from 'react'
-import {
-  openWaSqliteAdapter,
-  applyMigrations,
-  initDevice,
-  themes,
-  i18n,
-  type DbAdapter,
-} from '@smart-contacts/shared'
+import { openWaSqliteAdapter } from '@smart-contacts/shared/src/db/wa-sqlite-backend'
+import { applyMigrations, initDevice, themes, i18n, type DbAdapter } from '@smart-contacts/shared'
 
 export function MobileApp() {
   const tc = themes.COLOR_THEMES.default.dark
