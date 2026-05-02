@@ -3,21 +3,32 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "description": "Mobile (Android) shell. Build flow:\n  1. pnpm --filter @smart-contacts/pwa build       # produces dist/\n  2. npx cap add android                           # one-time, requires Java JDK + Android SDK\n  3. npx cap sync android\n  4. npx cap open android                          # opens Android Studio for build/run",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview --port 4174",
     "lint": "eslint 'src/**/*.{ts,tsx}'",
     "typecheck": "tsc -b",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "cap:sync": "cap sync android",
+    "cap:open": "cap open android"
   },
   "dependencies": {
     "@smart-contacts/shared": "workspace:*",
+    "@smart-contacts/web": "workspace:*",
+    "@capacitor/core": "^6.1.0",
+    "@capacitor/android": "^6.1.0",
+    "@capacitor-community/sqlite": "^6.0.0",
+    "@capacitor/local-notifications": "^6.1.0",
+    "@capacitor/preferences": "^6.0.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "react-router-dom": "^6.26.0",
     "lucide-react": "^0.396.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.1.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",

@@ -35,4 +35,9 @@ export default defineConfig({
   // See web/vite.config.ts: pre-bundling wa-sqlite breaks WASM URL resolution in dev.
   optimizeDeps: { exclude: ['wa-sqlite'] },
   server: { port: 5174 },
+  build: {
+    // es2020 required by Capacitor 6 runtime (supports top-level await, BigInt, etc.).
+    target: 'es2020',
+    outDir: 'dist',
+  },
 })

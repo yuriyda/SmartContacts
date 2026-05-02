@@ -7,9 +7,15 @@
     "jsx": "react-jsx",
     "paths": {
       "@shared/*": ["../shared/src/*"],
-      "@smart-contacts/shared/*": ["../shared/*"]
+      "@smart-contacts/shared": ["../shared/src/index.ts"],
+      "@smart-contacts/shared/*": ["../shared/*"],
+      "@smart-contacts/web": ["../web/src/index.ts"],
+      "@smart-contacts/web/*": ["../web/*"]
     }
   },
   "include": ["src/**/*"],
-  "references": [{ "path": "../shared" }]
+  "references": [
+    { "path": "../shared" },
+    { "path": "../web" }
+  ]
 }
