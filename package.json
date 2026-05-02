@@ -9,6 +9,7 @@
     "build": "pnpm -r --parallel build",
     "dev:web": "pnpm --filter @smart-contacts/web dev",
     "dev:pwa": "pnpm --filter @smart-contacts/pwa dev",
+    "dev:tauri": "pnpm --filter @smart-contacts/tauri dev",
     "prepare": "husky"
   },
   "devDependencies": {

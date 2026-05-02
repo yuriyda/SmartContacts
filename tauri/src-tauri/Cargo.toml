@@ -1,0 +1,24 @@
+# Cargo.toml — Smart Contacts Tauri 2 backend.
+# This crate is a thin shell; all business logic lives in the JS/React layer.
+# Build dependencies: tauri-build (code-gen for Tauri macros).
+# Runtime dependencies: tauri core + SQLite + dialog plugins.
+# Rules: Do not add heavy Rust dependencies here — keep the binary small.
+#        SQL operations are handled via tauri-plugin-sql on the JS side.
+[package]
+name = "smart-contacts"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+name = "smart_contacts_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

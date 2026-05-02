@@ -21,6 +21,6 @@ module.exports = {
   settings: { react: { version: '18' } },
   ignorePatterns: ['dist', 'node_modules', 'coverage'],
   overrides: [
-    { files: ['web/src/**', 'pwa/src/**'], env: { browser: true, node: false } },
+    { files: ['web/src/**', 'pwa/src/**', 'tauri/src/**'], env: { browser: true, node: false } },
   ],
 }

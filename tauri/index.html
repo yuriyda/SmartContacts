@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart Contacts</title>
+  </head>
+  <body class="m-0">
+    <div id="root"></div>
+    <!--
+      Stale-SW cleanup: Tauri does NOT register a service worker (PWA lives in pwa/).
+      Unregister any leftover SW on first load so Tauri WebView is not affected
+      by cached installs from earlier project state.
+    -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          regs.forEach((r) => r.unregister())
+        })
+        if (window.caches) {
+          caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)))
+        }
+      }
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
