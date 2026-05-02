@@ -42,7 +42,10 @@ export function DetailScreen({ dbState }: { dbState: DbState }) {
   }
 
   const onDelete = async () => {
-    if (!window.confirm('Delete this contact?')) return
+    const confirmMsg = contact.protected
+      ? 'This contact is protected. Delete anyway?'
+      : 'Delete this contact?'
+    if (!window.confirm(confirmMsg)) return
     await softDelete(contact.id)
     nav('/list')
   }

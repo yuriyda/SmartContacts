@@ -12,12 +12,21 @@
  *  - No bulk operations, no multi-select, no undo.
  *  - Touch targets ≥ 44px (header buttons h-11, Save button h-11).
  *
- * Note: window.confirm is NOT used here; cancel navigates back immediately.
- * Unsaved-changes guard is deferred to a future iteration.
+ * Edit-mode correctness rules (P11.T4 follow-up):
+ *  - Cleared fields are explicitly deleted from the draft so stale values are
+ *    not retained from the base spread (Issue 1).
+ *  - Secondary phones/emails on the existing contact are preserved; only the
+ *    primary slot is overwritten (Issue 2).
+ *  - Deleting a protected contact shows an upgraded confirm message (Issue 3).
+ *
+ * Note: window.confirm is used only on delete (protected guard). Cancel
+ * navigates back immediately; unsaved-changes guard is deferred.
  *
  * Rules:
- *  - No DB access; all mutations via useContacts.upsert.
+ *  - No DB access; all mutations via useContacts.upsert / softDelete.
  *  - lamportTs and deviceId are set to sentinel values (0 / '') — repo.upsert overwrites them.
+ *  - exactOptionalPropertyTypes: never assign `undefined` to optional keys;
+ *    use setOrDelete() or rewrite*Primary() helpers instead.
  */
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -27,6 +36,66 @@ import { ulid } from '@smart-contacts/shared'
 import type { DbState } from '@smart-contacts/web'
 import { useContacts } from '@smart-contacts/web/store/useContacts'
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Assign or delete a key on a Contact object.
+ * Required because exactOptionalPropertyTypes forbids direct `obj.key = undefined`.
+ */
+function setOrDelete<K extends keyof Contact>(
+  obj: Contact,
+  key: K,
+  value: Contact[K] | undefined,
+): void {
+  if (value === undefined) {
+    delete (obj as unknown as Record<string, unknown>)[key as string]
+  } else {
+    obj[key] = value
+  }
+}
+
+/**
+ * Return an updated phones array where the primary slot is replaced with
+ * newValue while secondary entries are preserved unchanged.
+ * Returns undefined when the resulting list is empty.
+ */
+function rewritePrimaryPhone(existing: Contact | null, newValue: string): Phone[] | undefined {
+  const list = (existing?.phones ?? []).slice()
+  const primaryIdx = list.findIndex((p) => p.primary)
+  const idx = primaryIdx >= 0 ? primaryIdx : 0
+  const trimmed = newValue.trim()
+  if (!trimmed) {
+    if (list.length > idx) list.splice(idx, 1)
+    return list.length > 0 ? list : undefined
+  }
+  if (list.length === 0) return [{ value: trimmed, primary: true }]
+  list[idx] = { ...list[idx]!, value: trimmed, primary: true }
+  // Ensure no other entry claims primary
+  return list.map((p, i) => (i === idx ? p : { ...p, primary: false }))
+}
+
+/**
+ * Return an updated emails array where the primary slot is replaced with
+ * newValue while secondary entries are preserved unchanged.
+ * Returns undefined when the resulting list is empty.
+ */
+function rewritePrimaryEmail(existing: Contact | null, newValue: string): Email[] | undefined {
+  const list = (existing?.emails ?? []).slice()
+  const primaryIdx = list.findIndex((e) => e.primary)
+  const idx = primaryIdx >= 0 ? primaryIdx : 0
+  const trimmed = newValue.trim()
+  if (!trimmed) {
+    if (list.length > idx) list.splice(idx, 1)
+    return list.length > 0 ? list : undefined
+  }
+  if (list.length === 0) return [{ value: trimmed, primary: true }]
+  list[idx] = { ...list[idx]!, value: trimmed, primary: true }
+  // Ensure no other entry claims primary
+  return list.map((e, i) => (i === idx ? e : { ...e, primary: false }))
+}
+
 interface Props {
   dbState: DbState
   mode: 'new' | 'edit'
@@ -34,7 +103,7 @@ interface Props {
 
 export function EditScreen({ dbState, mode }: Props) {
   const { id } = useParams<{ id: string }>()
-  const { contacts, upsert } = useContacts(dbState.contactsRepo)
+  const { contacts, upsert, softDelete } = useContacts(dbState.contactsRepo)
   const nav = useNavigate()
 
   const existing =
@@ -70,9 +139,7 @@ export function EditScreen({ dbState, mode }: Props) {
 
   const onSave = async () => {
     const now = new Date().toISOString()
-    // Build the contact by spreading any existing fields, then overwriting the
-    // minimal editable set. exactOptionalPropertyTypes requires conditional spreading
-    // for optional fields — we cannot assign `undefined` directly.
+    // Start from existing contact (edit) or a fresh skeleton (new).
     const base: Contact = existing ?? {
       id: ulid(),
       createdAt: now,
@@ -80,26 +147,40 @@ export function EditScreen({ dbState, mode }: Props) {
       lamportTs: 0,
       deviceId: '',
     }
-    const next: Contact = {
-      ...base,
-      id: base.id,
-      createdAt: base.createdAt,
-      updatedAt: now,
-      lamportTs: base.lamportTs,
-      deviceId: base.deviceId,
-      ...(givenName.trim() ? { givenName: givenName.trim() } : {}),
-      ...(familyName.trim() ? { familyName: familyName.trim() } : {}),
-      ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
-      ...(phone.trim() ? { phones: [{ value: phone.trim(), primary: true }] } : {}),
-      ...(email.trim() ? { emails: [{ value: email.trim(), primary: true }] } : {}),
-      ...(notesMd.trim() ? { notesMd: notesMd.trim() } : {}),
-    }
-    await upsert(next)
+
+    // Build draft by spreading base, then explicitly set-or-delete each editable
+    // field so that clearing a field in edit mode removes the old value instead
+    // of silently retaining it from the base spread (Issue 1).
+    const draft: Contact = { ...base }
+    setOrDelete(draft, 'givenName', givenName.trim() || undefined)
+    setOrDelete(draft, 'familyName', familyName.trim() || undefined)
+    setOrDelete(draft, 'displayName', displayName.trim() || undefined)
+    setOrDelete(draft, 'notesMd', notesMd.trim() || undefined)
+
+    // Preserve secondary phones/emails from the existing contact; only the
+    // primary slot is overwritten (Issue 2).
+    setOrDelete(draft, 'phones', rewritePrimaryPhone(existing, phone))
+    setOrDelete(draft, 'emails', rewritePrimaryEmail(existing, email))
+
+    draft.updatedAt = now
+
+    await upsert(draft)
     if (existing) {
       nav(`/contact/${existing.id}`)
     } else {
       nav('/list')
     }
+  }
+
+  const onDelete = async () => {
+    if (!existing) return
+    // Issue 3: show a stronger warning when the contact is protected.
+    const confirmMsg = existing.protected
+      ? 'This contact is protected. Delete anyway?'
+      : 'Delete this contact?'
+    if (!window.confirm(confirmMsg)) return
+    await softDelete(existing.id)
+    nav('/list')
   }
 
   const onCancel = () => {
@@ -133,16 +214,45 @@ export function EditScreen({ dbState, mode }: Props) {
         <FormField label="First name" value={givenName} onChange={setGivenName} />
         <FormField label="Last name" value={familyName} onChange={setFamilyName} />
         <FormField label="Display name" value={displayName} onChange={setDisplayName} />
-        <FormField label="Phone" value={phone} onChange={setPhone} type="tel" />
-        <FormField label="Email" value={email} onChange={setEmail} type="email" />
+        {mode === 'edit' && (existing?.phones?.length ?? 0) > 1 ? (
+          <FormField
+            label="Phone"
+            value={phone}
+            onChange={setPhone}
+            type="tel"
+            hint="Other phones are preserved."
+          />
+        ) : (
+          <FormField label="Phone" value={phone} onChange={setPhone} type="tel" />
+        )}
+        {mode === 'edit' && (existing?.emails?.length ?? 0) > 1 ? (
+          <FormField
+            label="Email"
+            value={email}
+            onChange={setEmail}
+            type="email"
+            hint="Other emails are preserved."
+          />
+        ) : (
+          <FormField label="Email" value={email} onChange={setEmail} type="email" />
+        )}
         <FormFieldArea label="Notes" value={notesMd} onChange={setNotesMd} />
+        {mode === 'edit' && (
+          <button
+            type="button"
+            onClick={() => void onDelete()}
+            className="w-full mt-4 h-11 rounded border border-red-500 text-red-400 hover:bg-red-900/30 text-sm font-medium"
+          >
+            Delete contact
+          </button>
+        )}
       </div>
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Internal UI helpers
 // ---------------------------------------------------------------------------
 
 function FormField({
@@ -150,11 +260,13 @@ function FormField({
   value,
   onChange,
   type = 'text',
+  hint,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
   type?: string
+  hint?: string
 }) {
   return (
     <label className="block">
@@ -165,6 +277,7 @@ function FormField({
         onChange={(e) => onChange(e.target.value)}
         className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-slate-100 focus:outline-none focus:border-sky-500"
       />
+      {hint && <span className="block text-xs text-slate-500 mt-0.5">{hint}</span>}
     </label>
   )
 }
