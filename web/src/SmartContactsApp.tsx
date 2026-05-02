@@ -271,6 +271,8 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
     contact: null,
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // settingsInitialTab: set to 'backup' when opened via native menu Export/Import action.
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'general' | 'backup'>('general')
   const [helpOpen, setHelpOpen] = useState(false)
 
   const filtered = useFilteredContacts(contacts, filters)
@@ -828,49 +830,62 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
     [filtered, selectedId],
   )
 
+  // Extracted undo/redo so they can be shared with native menu handler below.
+  const handleUndo = useCallback(async () => {
+    const action = undoStore.past[undoStore.past.length - 1]
+    if (!action) {
+      push(t('undo.empty'))
+      return
+    }
+    await undoable.applyUndo(action)
+    undoStore.popUndo()
+    push(`${t('undo.toast_done')}: ${t(`undo.kind.${action.kind}`)}`)
+  }, [undoStore, undoable, push, t])
+
+  const handleRedo = useCallback(async () => {
+    const action = undoStore.future[undoStore.future.length - 1]
+    if (!action) {
+      push(t('undo.empty_redo'))
+      return
+    }
+    await undoable.applyRedo(action)
+    undoStore.popRedo()
+    push(`${t('undo.toast_redone')}: ${t(`undo.kind.${action.kind}`)}`)
+  }, [undoStore, undoable, push, t])
+
+  // Listen for native menu actions forwarded from tauri/src/main.tsx via CustomEvent.
+  // Export/Import open Settings → Backup tab (native file dialogs are used there).
+  // Undo/Redo delegate to the handlers above.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail
+      if (id === 'undo') void handleUndo()
+      else if (id === 'redo') void handleRedo()
+      else if (id === 'export' || id === 'import') {
+        setSettingsInitialTab('backup')
+        setSettingsOpen(true)
+      }
+    }
+    window.addEventListener('smart-contacts:menu-action', handler)
+    return () => window.removeEventListener('smart-contacts:menu-action', handler)
+  }, [handleUndo, handleRedo])
+
   useKeyboard([
     { combo: 'cmd+n', handler: handleAdd, description: 'hotkey.add' },
     { combo: 'cmd+,', handler: () => setSettingsOpen((o) => !o), description: 'hotkey.settings' },
     {
       combo: 'cmd+shift+z',
-      handler: async () => {
-        const action = undoStore.future[undoStore.future.length - 1]
-        if (!action) {
-          push(t('undo.empty_redo'))
-          return
-        }
-        await undoable.applyRedo(action)
-        undoStore.popRedo()
-        push(`${t('undo.toast_redone')}: ${t(`undo.kind.${action.kind}`)}`)
-      },
+      handler: handleRedo,
       description: 'hotkey.redo',
     },
     {
       combo: 'ctrl+y',
-      handler: async () => {
-        const action = undoStore.future[undoStore.future.length - 1]
-        if (!action) {
-          push(t('undo.empty_redo'))
-          return
-        }
-        await undoable.applyRedo(action)
-        undoStore.popRedo()
-        push(`${t('undo.toast_redone')}: ${t(`undo.kind.${action.kind}`)}`)
-      },
+      handler: handleRedo,
       description: 'hotkey.redo',
     },
     {
       combo: 'cmd+z',
-      handler: async () => {
-        const action = undoStore.past[undoStore.past.length - 1]
-        if (!action) {
-          push(t('undo.empty'))
-          return
-        }
-        await undoable.applyUndo(action)
-        undoStore.popUndo()
-        push(`${t('undo.toast_done')}: ${t(`undo.kind.${action.kind}`)}`)
-      },
+      handler: handleUndo,
       description: 'hotkey.undo',
     },
     { combo: 'j', handler: () => navigate(1), description: 'hotkey.next' },
@@ -1087,7 +1102,11 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
 
       <SettingsDialog
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        initialTab={settingsInitialTab}
+        onClose={() => {
+          setSettingsOpen(false)
+          setSettingsInitialTab('general')
+        }}
         contacts={contacts}
         upsert={upsert}
         defs={defs}

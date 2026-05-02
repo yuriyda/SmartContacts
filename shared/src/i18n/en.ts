@@ -167,6 +167,8 @@ export const en = {
     replace: 'Replace',
     imported: 'Imported: {inserted} new, {updated} updated, {skipped} skipped',
     include_hidden: 'Include hidden contacts in export',
+    exported_native: 'Backup saved',
+    imported_native: 'Backup imported from {filename}',
   },
   settings: {
     title: 'Settings',

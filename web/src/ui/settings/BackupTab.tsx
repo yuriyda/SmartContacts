@@ -7,6 +7,8 @@
  *  - All destructive actions go through ConfirmDialog.
  *  - Import file is read and parsed; bundle.version === 1 is validated before any write.
  *  - No `any` types.
+ *  - When running inside Tauri, window.__SMART_CONTACTS_NATIVE__ is used for file dialogs
+ *    instead of browser blob URLs / <input type="file">. No direct @tauri-apps/* imports here.
  */
 import { useState, useRef, useCallback } from 'react'
 import type { BackupBundle } from '@smart-contacts/shared'
@@ -23,6 +25,18 @@ interface BackupTabProps {
   refreshContacts: () => void
   refreshDefs: () => Promise<void>
   onToast: (msg: string) => void
+}
+
+// Native bridge contract — mirrors tauri/src/native-bridge.ts but without direct import.
+// window.__SMART_CONTACTS_NATIVE__ is populated by tauri/src/main.tsx at startup.
+declare global {
+  interface Window {
+    __SMART_CONTACTS_NATIVE__?: {
+      pickSaveLocation: (filename: string) => Promise<{ path: string; filename: string } | null>
+      writeTextToFile: (path: string, content: string) => Promise<void>
+      pickAndReadJsonFile: () => Promise<{ path: string; content: string } | null>
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -45,16 +59,27 @@ export function BackupTab({ refreshContacts, refreshDefs, onToast }: BackupTabPr
     if (!db) return
     const bundle = await exportBackup(db, { includeHidden })
     const json = JSON.stringify(bundle, null, 2)
-    const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `contacts-backup-${new Date().toISOString().slice(0, 19).replace(/:/g, '')}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-  }, [db, includeHidden])
+    const suggestedName = `contacts-backup-${new Date().toISOString().slice(0, 19).replace(/:/g, '')}.json`
 
-  // ----- Import: file picked -----
+    const native = window.__SMART_CONTACTS_NATIVE__
+    if (native) {
+      const pick = await native.pickSaveLocation(suggestedName)
+      if (!pick) return // user cancelled
+      await native.writeTextToFile(pick.path, json)
+      onToast(t('backup.exported_native'))
+    } else {
+      // Browser fallback: download via blob URL
+      const blob = new Blob([json], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = suggestedName
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+  }, [db, includeHidden, onToast, t])
+
+  // ----- Import: file picked via browser input -----
 
   const handleFilePicked = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -80,6 +105,30 @@ export function BackupTab({ refreshContacts, refreshDefs, onToast }: BackupTabPr
     },
     [onToast],
   )
+
+  // ----- Import: click handler — uses native dialog if available -----
+
+  const handleImportClick = useCallback(async () => {
+    const native = window.__SMART_CONTACTS_NATIVE__
+    if (native) {
+      const result = await native.pickAndReadJsonFile()
+      if (!result) return // user cancelled
+      try {
+        const raw = JSON.parse(result.content) as unknown
+        const bundle = raw as BackupBundle
+        if (bundle.version !== 1) {
+          onToast('Unsupported backup version')
+          return
+        }
+        setPendingBundle(bundle)
+      } catch {
+        onToast('Failed to parse backup file')
+      }
+    } else {
+      // Browser fallback: trigger file input
+      fileRef.current?.click()
+    }
+  }, [onToast])
 
   const doImport = useCallback(
     async (mode: 'merge' | 'replace') => {
@@ -148,6 +197,7 @@ export function BackupTab({ refreshContacts, refreshDefs, onToast }: BackupTabPr
       {/* Import */}
       <div className="space-y-2">
         <h3 className={`text-xs font-semibold uppercase tracking-wider ${TC.textMuted}`}>Import</h3>
+        {/* Hidden file input — used in browser mode only */}
         <input
           ref={fileRef}
           type="file"
@@ -157,7 +207,7 @@ export function BackupTab({ refreshContacts, refreshDefs, onToast }: BackupTabPr
         />
         <button
           type="button"
-          onClick={() => fileRef.current?.click()}
+          onClick={() => void handleImportClick()}
           className={`flex items-center gap-2 px-3 py-2 rounded text-sm border ${TC.borderClass} ${TC.textSec} hover:opacity-80`}
         >
           <Upload size={14} />

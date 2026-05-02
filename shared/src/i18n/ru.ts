@@ -169,6 +169,8 @@ export const ru: Dict = {
     replace: 'Заменить',
     imported: 'Импортировано: {inserted} новых, {updated} обновлено, {skipped} пропущено',
     include_hidden: 'Включить скрытые контакты в экспорт',
+    exported_native: 'Бэкап сохранён',
+    imported_native: 'Бэкап загружен из {filename}',
   },
   settings: {
     title: 'Настройки',
