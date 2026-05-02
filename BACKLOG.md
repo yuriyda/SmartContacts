@@ -133,6 +133,50 @@ task; without an owner, an item does not belong here.
   and in onboarding overlay, with confirm dialog and
   `meta.demo_seeded` idempotency guard.
 
+## P12 (PWA mobile follow-ups)
+
+- **PWA mobile sync stub — wire `runSync()` end-to-end.**
+  Source: P11.T5 code review. `pwa/src/ui/mobile/screens/SettingsScreen.tsx:86–89`
+  currently shows an inline message when "Sync now" is tapped — no actual sync.
+  Plan §T5 called for `runSync(...)` invocation plus a "last sync timestamp"
+  display. P12 must: (a) port Google OAuth wiring from `web/`, including the
+  GIS `<script>` tag in `pwa/index.html` and `VITE_GOOGLE_OAUTH_CLIENT_ID`
+  reading; (b) call `syncEngine.syncOnce(deps)` from the button handler;
+  (c) read `meta.last_sync_at` and render it under the button as "Last sync:
+  X minutes ago"; (d) add a "Reset sync state" button mirroring desktop. Must
+  remain foreground-only per §22.6.
+
+- **PWA mobile EditScreen — wire full field set.**
+  Source: P11.T4 review (suggestion). EditScreen covers only givenName /
+  familyName / displayName / primary phone / primary email / notesMd.
+  Addresses, organizations, urls, im_clients, events, custom fields, tags,
+  groups, priority are deferred. P12 must add a tabbed or segmented mobile
+  form for these, ideally reusing pieces of `web/src/ui/ContactEditDialog`.
+
+- **PWA mobile DetailScreen — responsive width override + custom fields.**
+  Source: P11.T4 review (suggestion). `<ContactDetail>` defaults to 420px
+  width, overflows on narrow phones (currently clipped by parent
+  `overflow-y-auto`). Plus `defs={[]}` is passed, so custom fields don't
+  render. P12 must: (a) add a `mobile` mode to `ContactDetail` that drops
+  the fixed width and uses `min-w-0`/`w-full`; (b) pass real `defs` from
+  `dbState.defsRepo` so custom fields render.
+
+## Repo hygiene (P10 follow-up)
+
+- **Physically move `wa-sqlite-backend.ts` and `snapshot-store.ts` into `web/`.**
+  Source: P10.T1 audit. Plan §T1 called for a physical move; implementer chose
+  a soft refactor (removed re-exports from `shared/src/index.ts`, kept files
+  in place because 12+ shared/ test files import them via relative path).
+  Boundary effect (no platform-specific code in shared's public API) is
+  achieved. To strictly conform to plan §T1, do a follow-up that: (a) sets
+  up vitest in `web/` (currently `pnpm test` in `web/` runs with
+  `--passWithNoTests`); (b) moves the two source files + their .test.ts
+  into `web/src/store/`; (c) rewrites all relative imports in shared/ tests
+  to deep import from `@smart-contacts/web/store/wa-sqlite-backend`; (d)
+  removes the deep-path imports in `web/src/store/useDb.ts`,
+  `pwa/src/MobileApp.tsx`, and the tsconfig path mappings. Cosmetic only —
+  current implementation is functionally correct.
+
 ## Coverage hygiene (P2 or earlier)
 
 - **`shared/vitest.config.ts` coverage `exclude` list missing.**
