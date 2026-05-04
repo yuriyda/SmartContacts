@@ -97,10 +97,20 @@ const v1: string[] = [
 ]
 
 export async function applyMigrations(db: DbAdapter): Promise<void> {
-  const rows = await db.select<{ value: string }>(
-    "SELECT value FROM meta WHERE key='schema_version'",
-  )
-  const current = rows[0] ? Number(rows[0].value) : 0
+  // On a fresh DB the `meta` table does not exist yet — different adapters react
+  // differently: wa-sqlite-backend silently returns [], but @tauri-apps/plugin-sql
+  // and @capacitor-community/sqlite throw "no such table: meta". Treat any
+  // failure here as "current = 0" (fresh DB) — the transaction below will create
+  // the meta table as part of v1.
+  let current = 0
+  try {
+    const rows = await db.select<{ value: string }>(
+      "SELECT value FROM meta WHERE key='schema_version'",
+    )
+    current = rows[0] ? Number(rows[0].value) : 0
+  } catch {
+    current = 0
+  }
   if (current >= CURRENT_SCHEMA_VERSION) return
 
   // All migration statements for every version MUST run inside this transaction,
