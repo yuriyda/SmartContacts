@@ -3,17 +3,21 @@
  * DbAdapter implementation for the Tauri desktop target.
  * Uses @tauri-apps/plugin-sql which talks to a native SQLite file via Rust.
  *
- * Notes:
- *  - Persistence is handled natively (file-based SQLite); no IndexedDB snapshot logic needed.
- *  - Transactions: plugin-sql v2 doesn't expose tx contexts directly. We emulate by issuing
- *    BEGIN / COMMIT / ROLLBACK manually. NESTED transactions are unsupported (same constraint
- *    as wa-sqlite-backend); enforce a flag to detect and throw.
- *  - The adapter returned from inside transaction() is the SAME object as the outer adapter —
- *    repos call it normally, queries route through the same Database connection.
+ * IMPORTANT — transactions are NOT supported.
+ * @tauri-apps/plugin-sql v2 wraps every execute() in its own auto-transaction
+ * and does not expose BEGIN/COMMIT/ROLLBACK. Issuing manual BEGIN throws
+ * "cannot start a transaction within a transaction"; manual COMMIT throws
+ * "no transaction is active". This matches TaskOrchestrator's known limitation
+ * (see /workspace/TaskOrchestrator-main/tauri-app/src/store/helpers.ts:154).
+ *
+ * Therefore our `transaction()` implementation simply invokes the function;
+ * each underlying statement runs in its own auto-tx. Atomicity of multi-statement
+ * sequences is NOT guaranteed. Callers should rely on idempotent statements
+ * (CREATE IF NOT EXISTS, INSERT OR REPLACE) so partial failures recover on retry.
  *
  * Rules for editing:
+ *  - Do NOT introduce manual BEGIN/COMMIT/ROLLBACK here — they will fail at runtime.
  *  - Do NOT change the DbAdapter contract (select/execute/transaction/close).
- *  - Do NOT add nested transaction support — plugin-sql has no SAVEPOINT integration.
  *  - The `close()` method delegates to Database.close(); do not suppress its errors.
  */
 
@@ -22,8 +26,6 @@ import type { DbAdapter } from '@smart-contacts/shared'
 
 export async function openTauriSqlAdapter(filename = 'smart-contacts.db'): Promise<DbAdapter> {
   const db = await Database.load(`sqlite:${filename}`)
-
-  let inTransaction = false
 
   const adapter: DbAdapter = {
     async select<T>(sql: string, params?: unknown[]): Promise<T[]> {
@@ -38,21 +40,9 @@ export async function openTauriSqlAdapter(filename = 'smart-contacts.db'): Promi
     },
 
     async transaction<T>(fn: (tx: DbAdapter) => Promise<T>): Promise<T> {
-      if (inTransaction) {
-        throw new Error('tauri-sql-backend: nested transactions are not supported')
-      }
-      inTransaction = true
-      await db.execute('BEGIN TRANSACTION')
-      try {
-        const result = await fn(adapter)
-        await db.execute('COMMIT')
-        return result
-      } catch (e) {
-        await db.execute('ROLLBACK').catch(() => undefined)
-        throw e
-      } finally {
-        inTransaction = false
-      }
+      // No real transaction — plugin-sql limitation (see file header).
+      // Each statement issued through `tx` runs in its own auto-tx.
+      return fn(adapter)
     },
 
     async close(): Promise<void> {
