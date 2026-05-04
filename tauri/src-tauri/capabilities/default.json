@@ -1,14 +1,18 @@
 {
-  "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for Smart Contacts",
+  "description": "Default capability — grants access to core Tauri APIs and SQLite plugin",
+  "local": true,
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "sql:default",
-    "dialog:default",
-    "fs:default",
+    "sql:allow-load",
+    "sql:allow-execute",
+    "sql:allow-select",
+    "sql:allow-close",
+    "dialog:allow-open",
+    "dialog:allow-save",
     "fs:allow-write-text-file",
-    "fs:allow-read-text-file"
+    "fs:allow-read-text-file",
+    "fs:allow-exists"
   ]
 }
