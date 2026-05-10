@@ -10,15 +10,20 @@
 import type { Contact, GroupMembership } from '../types'
 
 /**
- * Append the group to contact.groups if not already present (case-sensitive id match).
- * Returns a new Contact object; returns the same reference if already a member.
+ * Move the contact to the given group — REPLACE semantics, not append.
+ * A contact can be in at most one group at a time (product invariant).
+ * Tags allow multi-membership; groups don't.
+ *
+ * Returns the same reference if the contact is already in this group AND no
+ * other groups (already correctly settled). Otherwise returns a new Contact
+ * with `groups` set to a single-entry array.
  */
 export function addContactToGroup(c: Contact, g: GroupMembership): Contact {
   const existing = c.groups ?? []
-  if (existing.some((m) => m.id === g.id)) return c
+  if (existing.length === 1 && existing[0]!.id === g.id) return c
   // Spread only defined properties to satisfy exactOptionalPropertyTypes.
   const entry: GroupMembership = g.name !== undefined ? { id: g.id, name: g.name } : { id: g.id }
-  return { ...c, groups: [...existing, entry] }
+  return { ...c, groups: [entry] }
 }
 
 /**

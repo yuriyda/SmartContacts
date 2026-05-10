@@ -26,32 +26,43 @@ function makeContact(overrides: Partial<Contact> = {}): Contact {
 // addContactToGroup
 // ---------------------------------------------------------------------------
 
-describe('addContactToGroup', () => {
-  test('appends group when contact has no groups', () => {
+describe('addContactToGroup (MOVE semantics — single group invariant)', () => {
+  test('sets group when contact has no groups', () => {
     const c = makeContact()
     const result = addContactToGroup(c, { id: 'g_friends', name: 'Friends' })
     expect(result.groups).toEqual([{ id: 'g_friends', name: 'Friends' }])
   })
 
-  test('appends group when contact has other groups', () => {
+  test('REPLACES existing group — contact never in two groups simultaneously', () => {
     const c = makeContact({ groups: [{ id: 'g_work', name: 'Work' }] })
     const result = addContactToGroup(c, { id: 'g_friends', name: 'Friends' })
-    expect(result.groups).toHaveLength(2)
-    expect(result.groups).toContainEqual({ id: 'g_friends', name: 'Friends' })
-    expect(result.groups).toContainEqual({ id: 'g_work', name: 'Work' })
+    expect(result.groups).toHaveLength(1)
+    expect(result.groups).toEqual([{ id: 'g_friends', name: 'Friends' }])
   })
 
-  test('idempotent: returns same reference when already a member', () => {
+  test('idempotent: returns same reference when already the only group', () => {
     const c = makeContact({ groups: [{ id: 'g_friends', name: 'Friends' }] })
     const result = addContactToGroup(c, { id: 'g_friends', name: 'Friends' })
     expect(result).toBe(c)
   })
 
+  test('legacy multi-group contact: collapses to the new group only', () => {
+    // Older data may have multiple groups; dropping on a new one normalizes it.
+    const c = makeContact({
+      groups: [
+        { id: 'g_a', name: 'A' },
+        { id: 'g_b', name: 'B' },
+      ],
+    })
+    const result = addContactToGroup(c, { id: 'g_c', name: 'C' })
+    expect(result.groups).toEqual([{ id: 'g_c', name: 'C' }])
+  })
+
   test('id match is case-sensitive', () => {
     const c = makeContact({ groups: [{ id: 'g_friends', name: 'Friends' }] })
     const result = addContactToGroup(c, { id: 'g_Friends', name: 'Friends' })
-    // Different case = different id → should append
-    expect(result.groups).toHaveLength(2)
+    // Different case = different id → REPLACE, single entry with new id.
+    expect(result.groups).toEqual([{ id: 'g_Friends', name: 'Friends' }])
   })
 
   test('does not touch other contact fields', () => {
