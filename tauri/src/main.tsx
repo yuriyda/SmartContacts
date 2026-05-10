@@ -9,15 +9,14 @@
  *
  * T5: Attaches window.__SMART_CONTACTS_NATIVE__ so BackupTab can use native
  *     file dialogs without a direct @tauri-apps/* import in web/.
- *     Listens to "smart-contacts:menu" events from the Rust native menu and
- *     forwards them as DOM CustomEvents for SmartContactsApp to handle.
  *
  * Rules: Keep this file as thin as possible — all app logic lives in @smart-contacts/web.
  * Do not add business logic here; only Tauri-specific bootstrap.
+ * Note: Native menu was removed — Undo/Redo work via keyboard shortcuts in React,
+ * Export/Import live in Settings → Backup.
  */
-import React, { useEffect } from 'react'
+import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { listen } from '@tauri-apps/api/event'
 import { SmartContactsShell } from '@smart-contacts/web'
 import { useTauriDb } from './store/useTauriDb'
 import { pickSaveLocation, writeTextToFile, pickAndReadJsonFile } from './native-bridge'
@@ -39,19 +38,6 @@ window.__SMART_CONTACTS_NATIVE__ = { pickSaveLocation, writeTextToFile, pickAndR
 
 function TauriApp() {
   const dbState = useTauriDb()
-
-  // Forward native menu events to the DOM so SmartContactsApp can wire them
-  // to undo/redo and backup handlers without knowing about Tauri APIs.
-  useEffect(() => {
-    const unsub = listen<string>('smart-contacts:menu', (e) => {
-      const id = e.payload
-      window.dispatchEvent(new CustomEvent('smart-contacts:menu-action', { detail: id }))
-    })
-    return () => {
-      void unsub.then((fn) => fn())
-    }
-  }, [])
-
   return <SmartContactsShell dbState={dbState} />
 }
 
