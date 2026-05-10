@@ -74,7 +74,7 @@ Output:
 ### What works
 
 - All web features: contacts CRUD, network dashboard, bulk operations, undo/redo, hidden/protected flags, demo data, theme.
-- Native menu: File → Export… / Import…, Edit → Undo / Redo / Copy / Paste.
+- Keyboard shortcuts for undo/redo (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z, Ctrl+Y); Export/Import via Settings → Backup.
 - Native file-picker for backup export/import (replaces browser blob/upload).
 - SQLite persistence in user data dir (`~/.local/share/smart-contacts.db` on Linux; analogous paths on macOS/Windows).
 
@@ -83,8 +83,8 @@ Output:
 1. Launch app — window opens with the same UI as web.
 2. Add a contact, edit, delete — verify state persists across relaunch.
 3. Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z redo.
-4. File → Export → native save dialog → JSON file written.
-5. File → Import → native open dialog → contacts merged.
+4. Settings → Backup → Export → native save dialog → JSON file written.
+5. Settings → Backup → Import → native open dialog → contacts merged.
 6. Quit and relaunch — contacts persist (native SQLite, not IndexedDB).
 
 ## PWA (mobile, Android)

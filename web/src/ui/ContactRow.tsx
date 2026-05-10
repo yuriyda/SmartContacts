@@ -3,10 +3,17 @@
  * Single contact row rendered inside the MainList.
  * Shows avatar, display name, primary phone/email (comfortable mode), tags, and priority dot.
  * Modeled after TaskOrchestrator/tauri-app/src/ui/TaskRow.tsx — visual grammar and spacing.
+ *
+ * Focus model (per T1): rows are NOT focusable — no tabIndex, no role="button", no
+ * onKeyDown. Keyboard nav (arrows, Enter, etc.) is global via useKeyboard in
+ * SmartContactsApp.tsx. The visual cursor highlight reflects selectedId, not DOM focus.
+ * data-contact-id is exposed so the marquee selection (T4) can hit-test rows.
+ *
  * Rules: no DB access; only presentational. Uses AppContext for theme/density/locale.
  * DnD: rows are made draggable on non-touch devices only (isTouchDevice guard).
  *       The dragged data is the contact id, transferred under DND_MIME.
  */
+import { useState } from 'react'
 import type { Contact } from '@smart-contacts/shared'
 import { computeDisplayName, relationshipScore, countFilledFields } from '@smart-contacts/shared'
 import { useApp } from './AppContext'
@@ -26,6 +33,8 @@ interface ContactRowProps {
   onSelect: (e: React.MouseEvent) => void
   /** Called when the checkbox is clicked — always toggles, ignoring keyboard modifiers. */
   onToggleSelection?: (e: React.MouseEvent) => void
+  /** Called on right-click — caller opens a context menu at e.clientX/clientY. */
+  onContextMenu?: (id: string, e: React.MouseEvent) => void
   onTouch?: () => void
   onSoftDelete?: () => void
   onOpenEdit?: (id: string) => void
@@ -38,6 +47,7 @@ export function ContactRow({
   anySelected = false,
   onSelect,
   onToggleSelection,
+  onContextMenu,
   onTouch: _onTouch,
   onSoftDelete: _onSoftDelete,
   onOpenEdit,
@@ -67,35 +77,64 @@ export function ContactRow({
     : 0
   const stars = Math.round(score / 20)
 
-  // Determine row highlight: anchor selected takes priority, then multi-selected background.
-  const rowBg = selected
-    ? 'bg-sky-600/20 text-sky-100'
-    : multiSelected
-      ? `bg-sky-600/10 ${TC.textSec}`
-      : `${TC.textSec} ${TC.hoverBg}`
+  // Visual grammar (modeled after TaskOrchestrator/tauri-app/src/ui/TaskRow.tsx:40-71):
+  //   cursor (active row) ............ inset ring (sky-400/40)
+  //   selected (in multi-set) ........ left 3px stripe (sky-500) + bg sky/10
+  //   cursor AND selected ............ ring strengthens to /60; stripe + bg also show
+  //   hovered (else) ................. soft inset ring (sky-400/20) + bg sky/5
+  //   neither ........................ no decoration
+  // Hovered uses useState driven by onMouseEnter/Leave (TO pattern) — Tailwind
+  // hover:bg-* alone is too subtle on dark themes. Hover styling is suppressed
+  // when the row is the cursor (its ring is stronger) or in the selection set
+  // (the stripe is more salient).
+  // ring + box-shadow stripe coexist via Tailwind's chained box-shadow variables.
+  const isCursor = selected
+  const isInSet = multiSelected
+  const [hovered, setHovered] = useState(false)
+  const cursorRing = isCursor
+    ? isInSet
+      ? 'ring-1 ring-inset ring-sky-400/60'
+      : 'ring-1 ring-inset ring-sky-400/40'
+    : ''
+  const selectionPaint = isInSet ? 'shadow-[inset_3px_0_0_0_#0ea5e9] bg-sky-500/10' : ''
+  const hoverPaint =
+    !isCursor && !isInSet && hovered ? 'ring-1 ring-inset ring-sky-400/20 bg-sky-500/5' : ''
+  // Cursor row gets the brightest text regardless of multi-set membership; rows in the
+  // set (but not cursor) are slightly less emphasized; neither = muted.
+  const textClass = isCursor ? 'text-sky-100' : isInSet ? TC.text : TC.textSec
+  const rowBg = [cursorRing, selectionPaint, hoverPaint, textClass].filter(Boolean).join(' ')
 
   return (
     <div
+      data-contact-id={contact.id}
       onClick={onSelect}
       onDoubleClick={() => onOpenEdit?.(contact.id)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onContextMenu={(e) => {
+        if (onContextMenu) {
           e.preventDefault()
-          // Synthesise a plain mouse event for keyboard activation (single-select)
-          onSelect(e as unknown as React.MouseEvent)
+          onContextMenu(contact.id, e)
         }
       }}
-      role="button"
-      tabIndex={0}
+      role="option"
+      aria-selected={multiSelected || selected}
       {...(!isTouchDevice && {
         draggable: true,
         onDragStart: (e: React.DragEvent<HTMLDivElement>) => {
+          // Mirrors TaskOrchestrator/tauri-app/src/TaskOrchestrator.tsx:606-609 pattern.
+          // Single MIME, single effectAllowed value matching dropEffect on the
+          // target side. WebView2 (Tauri Windows) does not fire drop unless
+          // both sides agree on a single effect.
           e.dataTransfer.setData(DND_MIME, contact.id)
           e.dataTransfer.effectAllowed = 'copy'
         },
       })}
       className={[
-        'group flex items-center gap-3 px-3 cursor-pointer transition-colors outline-none',
+        // rounded-md so the cursor ring + selection stripe + hover ring all
+        // get rounded corners (Tailwind's ring is implemented as box-shadow
+        // and follows the element's border-radius).
+        'group flex items-center gap-3 px-3 rounded-md cursor-pointer transition-colors outline-none',
         density === 'compact' ? 'py-1' : 'py-2',
         rowBg,
       ].join(' ')}
@@ -134,10 +173,31 @@ export function ContactRow({
         )}
       </div>
 
-      {/* Show up to 2 tags */}
-      {(contact.tags ?? []).slice(0, 2).map((tg) => (
-        <TagPill key={tg} name={tg} />
-      ))}
+      {/* Show up to 2 tags + a +N badge for the remainder. The full list is
+        visible in the detail panel; the badge surfaces hidden tags so a tag
+        added via DnD doesn't disappear from view when the contact already
+        has 2 tags (addContactToTag appends to the end). Tooltip lists them. */}
+      {(() => {
+        const all = contact.tags ?? []
+        const visible = all.slice(0, 2)
+        const hidden = all.slice(2)
+        return (
+          <>
+            {visible.map((tg) => (
+              <TagPill key={tg} name={tg} />
+            ))}
+            {hidden.length > 0 && (
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded ${TC.elevated} ${TC.textMuted}`}
+                title={hidden.map((t) => `#${t}`).join(' ')}
+                aria-label={`${hidden.length} more tags: ${hidden.join(', ')}`}
+              >
+                +{hidden.length}
+              </span>
+            )}
+          </>
+        )
+      })()}
 
       {contact.priority !== undefined && <PriorityBadge priority={contact.priority} />}
       {showScore && (

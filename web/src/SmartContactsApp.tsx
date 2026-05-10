@@ -26,6 +26,10 @@ import {
   countChangedFields,
   applyMultiSelect,
   modeFromEvent,
+  applyContactSort,
+  toggleContactSort,
+  type ContactSort,
+  type ContactSortField,
 } from '@smart-contacts/shared'
 import { exportBackup } from '@smart-contacts/shared'
 import { AppProvider, useApp } from './ui/AppContext'
@@ -38,6 +42,9 @@ import { useInteractions } from './store/useInteractions'
 import { useContactTasks } from './store/useContactTasks'
 import { Sidebar } from './ui/Sidebar'
 import { MainList } from './ui/MainList'
+import { ContactContextMenu } from './ui/ContactContextMenu'
+import { SortBar } from './ui/SortBar'
+import { FilterChipsBar } from './ui/FilterChipsBar'
 import { StatusBar } from './ui/StatusBar'
 import { NavHeader } from './ui/NavHeader'
 import { ContactDetail } from './ui/ContactDetail'
@@ -218,8 +225,19 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
 
   // ---------------------------------------------------------------------------
 
+  // selectedId doubles as the cursor (active row): drives detail view + arrow-nav target.
+  // lastAnchorId is the *range anchor* — start of the current Shift-extended selection.
+  // It is independent of cursor: Shift+Click moves cursor but leaves anchor pinned, so
+  // successive Shift+Clicks expand/contract the range from a fixed start point (TO model).
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [lastAnchorId, setLastAnchorId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState(new Set<string>())
+  // Right-click context menu state. null when closed; otherwise viewport coords + target row.
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    contactId: string
+  } | null>(null)
 
   // Per-contact interaction journal (P8.B.1)
   const {
@@ -260,9 +278,12 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
 
   const [filters, setFilters] = useState<ContactFilters>(DEFAULT_FILTERS)
 
-  // Reset multi-select when any filter dimension changes.
+  // Reset multi-select + range anchor when any filter dimension changes.
+  // Cursor (selectedId) is clamped separately below so the detail view stays put
+  // when the cursor target survives the filter narrow.
   useEffect(() => {
     setSelectedIds(new Set())
+    setLastAnchorId(null)
   }, [filters.scope, filters.group, filters.tag, filters.organization, filters.search])
 
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -275,12 +296,73 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
   const [settingsInitialTab, setSettingsInitialTab] = useState<'general' | 'backup'>('general')
   const [helpOpen, setHelpOpen] = useState(false)
 
-  const filtered = useFilteredContacts(contacts, filters)
+  // Filtered list (filters only). The displayed list combines this with sort
+  // below so all downstream consumers (MainList, moveCursor, clamp effect,
+  // bulk handlers, marquee hit-test) see the rows in the user's chosen order.
+  const filteredOnly = useFilteredContacts(contacts, filters)
+
+  // Sort state — initialised from metaSettings.sort_v1; null means "no sort,
+  // preserve the order applyContactFilters produced". Parsed defensively so a
+  // corrupted persisted value doesn't blow up the boot.
+  const [sort, setSort] = useState<ContactSort | null>(() => {
+    const raw = metaSettings.sort_v1
+    if (!raw) return null
+    try {
+      const parsed = JSON.parse(raw) as ContactSort
+      if (
+        parsed &&
+        typeof parsed.field === 'string' &&
+        (parsed.dir === 'asc' || parsed.dir === 'desc')
+      ) {
+        return parsed
+      }
+      return null
+    } catch {
+      return null
+    }
+  })
+
+  const filtered = useMemo(
+    () => applyContactSort(filteredOnly, sort, locale),
+    [filteredOnly, sort, locale],
+  )
+
+  const onToggleSort = useCallback(
+    (field: ContactSortField) => {
+      setSort((prev) => {
+        const next = toggleContactSort(prev, field)
+        void saveMeta('sort_v1', JSON.stringify(next))
+        return next
+      })
+    },
+    [saveMeta],
+  )
+
   const aliveCount = useMemo(() => contacts.filter((c) => !c.deletedAt).length, [contacts])
   const selected = useMemo(
     () => contacts.find((c) => c.id === selectedId) ?? null,
     [contacts, selectedId],
   )
+
+  // Clamp cursor / selection / anchor against currently visible IDs.
+  // Mirrors TaskOrchestrator/tauri-app/src/hooks/useFilteredTasks.ts:145-151.
+  // Triggers on deletions, scope changes, search narrow — keeps state consistent
+  // so cursor never points at a hidden row and Shift-extend never references a
+  // dropped anchor.
+  useEffect(() => {
+    const visibleIds = new Set(filtered.map((c) => c.id))
+    setSelectedIds((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const id of prev) {
+        if (visibleIds.has(id)) next.add(id)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+    setSelectedId((prev) => (prev === null || visibleIds.has(prev) ? prev : null))
+    setLastAnchorId((prev) => (prev === null || visibleIds.has(prev) ? prev : null))
+  }, [filtered])
 
   const setFilter = useCallback(
     <K extends keyof ContactFilters>(k: K, v: ContactFilters[K]) =>
@@ -524,6 +606,8 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
 
   // Hotkey-bound search input ref
   const searchInputRef = useRef<HTMLInputElement>(null)
+  // MainList container ref — used by T3 keyboard nav (scrollIntoView) and T4 marquee.
+  const mainListRef = useRef<HTMLDivElement>(null)
 
   const handleAdd = useCallback(() => setEditing({ open: true, contact: null }), [])
 
@@ -788,46 +872,164 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
     [undoable, t, confirm],
   )
 
-  // Multi-select row click handler (Shift / Ctrl+Cmd support)
+  // Multi-select row click handler (Shift / Ctrl+Cmd support).
+  // Threads lastAnchorId (range anchor) — separate from cursor — into applyMultiSelect:
+  // Shift+Click leaves anchor pinned so successive Shift+Clicks expand/contract from it.
   const onSelectRow = useCallback(
     (id: string, e: React.MouseEvent) => {
       const mode = modeFromEvent(e)
       const orderedIds = filtered.map((c) => c.id)
       const result = applyMultiSelect(
-        { prev: selectedIds, anchor: selectedId, id, orderedIds },
+        { prev: selectedIds, anchor: lastAnchorId, id, orderedIds },
         mode,
       )
       setSelectedIds(result.next)
-      setSelectedId(result.nextAnchor)
+      setSelectedId(result.nextCursor)
+      setLastAnchorId(result.nextAnchor)
     },
-    [selectedIds, selectedId, filtered],
+    [selectedIds, lastAnchorId, filtered],
   )
 
-  // Checkbox toggle: always uses 'toggle' mode regardless of modifiers
+  // Checkbox toggle: always uses 'toggle' mode regardless of modifiers.
   const onToggleSelection = useCallback(
     (id: string, _e: React.MouseEvent) => {
       const orderedIds = filtered.map((c) => c.id)
       const result = applyMultiSelect(
-        { prev: selectedIds, anchor: selectedId, id, orderedIds },
+        { prev: selectedIds, anchor: lastAnchorId, id, orderedIds },
         'toggle',
       )
       setSelectedIds(result.next)
-      setSelectedId(result.nextAnchor)
+      setSelectedId(result.nextCursor)
+      setLastAnchorId(result.nextAnchor)
     },
-    [selectedIds, selectedId, filtered],
+    [selectedIds, lastAnchorId, filtered],
   )
 
-  // j/k navigation through filtered list
-  const navigate = useCallback(
-    (delta: 1 | -1) => {
+  // Cursor navigation through filtered list. Supports six targets and an `extend`
+  // flag for Shift+key — extends the selection from the existing range anchor up
+  // to the new cursor (anchor stays pinned, mirroring TO's Shift+Click semantics).
+  // After moving, scrolls the new cursor row into view.
+  const PAGE_STEP = 10
+  const moveCursor = useCallback(
+    (target: 'up' | 'down' | 'first' | 'last' | 'pgup' | 'pgdn', extend: boolean) => {
       if (filtered.length === 0) return
-      const idx = selectedId ? filtered.findIndex((c) => c.id === selectedId) : -1
-      let next = idx + delta
-      if (next < 0) next = 0
-      if (next >= filtered.length) next = filtered.length - 1
-      setSelectedId(filtered[next]!.id)
+      const currentIdx = selectedId ? filtered.findIndex((c) => c.id === selectedId) : -1
+      const start = currentIdx >= 0 ? currentIdx : 0
+      let nextIdx = start
+      switch (target) {
+        case 'up':
+          nextIdx = Math.max(0, start - 1)
+          break
+        case 'down':
+          nextIdx = Math.min(filtered.length - 1, start + 1)
+          break
+        case 'first':
+          nextIdx = 0
+          break
+        case 'last':
+          nextIdx = filtered.length - 1
+          break
+        case 'pgup':
+          nextIdx = Math.max(0, start - PAGE_STEP)
+          break
+        case 'pgdn':
+          nextIdx = Math.min(filtered.length - 1, start + PAGE_STEP)
+          break
+      }
+      const nextId = filtered[nextIdx]!.id
+
+      if (extend) {
+        // Range mode from anchor → new cursor. If no anchor yet, fall back to the
+        // current cursor as anchor (so Shift+Down with empty selection still works).
+        const orderedIds = filtered.map((c) => c.id)
+        const anchor = lastAnchorId ?? selectedId
+        const result = applyMultiSelect(
+          { prev: selectedIds, anchor, id: nextId, orderedIds },
+          'range',
+        )
+        setSelectedIds(result.next)
+        setSelectedId(result.nextCursor)
+        setLastAnchorId(result.nextAnchor)
+      } else {
+        // Plain move: cursor only, single-select on the new cursor.
+        setSelectedId(nextId)
+        setSelectedIds(new Set([nextId]))
+        setLastAnchorId(nextId)
+      }
+
+      // Scroll the new cursor row into view (block: 'nearest' avoids jumping the
+      // viewport when the row is already visible).
+      queueMicrotask(() => {
+        const el = mainListRef.current?.querySelector(
+          `[data-contact-id="${nextId}"]`,
+        ) as HTMLElement | null
+        el?.scrollIntoView({ block: 'nearest' })
+      })
     },
-    [filtered, selectedId],
+    [filtered, selectedId, lastAnchorId, selectedIds],
+  )
+
+  // j/k vim-style alias to ArrowDown/ArrowUp (no Shift-extend variants — keep terse).
+  const navigate = useCallback(
+    (delta: 1 | -1) => moveCursor(delta === 1 ? 'down' : 'up', false),
+    [moveCursor],
+  )
+
+  // Cmd/Ctrl+Shift+A — select all visible. Cmd/Ctrl+A is intercepted by Tauri's
+  // native "select all" so we use Shift to disambiguate (matches TO behavior).
+  const onSelectAllVisible = useCallback(() => {
+    if (filtered.length === 0) return
+    setSelectedIds(new Set(filtered.map((c) => c.id)))
+    // cursor + anchor untouched
+  }, [filtered])
+
+  // Right-click on a contact row → open the context menu at viewport coords.
+  const onListContextMenu = useCallback((id: string, e: React.MouseEvent) => {
+    setContextMenu({ x: e.clientX, y: e.clientY, contactId: id })
+  }, [])
+
+  // Context-menu action handlers. Each accepts the id-set chosen by the menu
+  // (single id when right-clicked outside multi-selection; whole set otherwise).
+  // All mutations route through `undoable.*` so they integrate with undo/redo.
+  const onCtxOpenDetail = useCallback((id: string) => setSelectedId(id), [])
+  const onCtxEditOne = useCallback((id: string) => handleOpenEdit(id), [handleOpenEdit])
+  const onCtxTouch = useCallback(
+    async (ids: ReadonlySet<string>) => {
+      for (const id of ids) await undoable.recordTouch(id)
+    },
+    [undoable],
+  )
+  const onCtxToggleHidden = useCallback(
+    async (ids: ReadonlySet<string>) => {
+      for (const id of ids) {
+        const c = contacts.find((x) => x.id === id)
+        if (c) await undoable.recordToggleFlag(c, 'hidden')
+      }
+    },
+    [contacts, undoable],
+  )
+  const onCtxToggleProtected = useCallback(
+    async (ids: ReadonlySet<string>) => {
+      for (const id of ids) {
+        const c = contacts.find((x) => x.id === id)
+        if (c) await undoable.recordToggleFlag(c, 'protected')
+      }
+    },
+    [contacts, undoable],
+  )
+  const onCtxDelete = useCallback(
+    async (ids: ReadonlySet<string>) => {
+      for (const id of ids) await handleSoftDelete(id)
+      setSelectedIds(new Set())
+    },
+    [handleSoftDelete],
+  )
+  const onCtxRestore = useCallback(
+    async (ids: ReadonlySet<string>) => {
+      for (const id of ids) await undoable.recordRestore(id)
+      setSelectedIds(new Set())
+    },
+    [undoable],
   )
 
   // Extracted undo/redo so they can be shared with native menu handler below.
@@ -888,8 +1090,67 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
       handler: handleUndo,
       description: 'hotkey.undo',
     },
+    // Vim-style aliases (kept for muscle memory).
     { combo: 'j', handler: () => navigate(1), description: 'hotkey.next' },
     { combo: 'k', handler: () => navigate(-1), description: 'hotkey.prev' },
+    // Arrow-key cursor navigation; Shift extends selection from anchor.
+    { combo: 'arrowdown', handler: () => moveCursor('down', false), description: 'hotkey.next' },
+    { combo: 'arrowup', handler: () => moveCursor('up', false), description: 'hotkey.prev' },
+    {
+      combo: 'shift+arrowdown',
+      handler: () => moveCursor('down', true),
+      description: 'hotkey.extend_down',
+    },
+    {
+      combo: 'shift+arrowup',
+      handler: () => moveCursor('up', true),
+      description: 'hotkey.extend_up',
+    },
+    { combo: 'home', handler: () => moveCursor('first', false), description: 'hotkey.first' },
+    { combo: 'end', handler: () => moveCursor('last', false), description: 'hotkey.last' },
+    {
+      combo: 'shift+home',
+      handler: () => moveCursor('first', true),
+      description: 'hotkey.extend_first',
+    },
+    {
+      combo: 'shift+end',
+      handler: () => moveCursor('last', true),
+      description: 'hotkey.extend_last',
+    },
+    { combo: 'pageup', handler: () => moveCursor('pgup', false), description: 'hotkey.pgup' },
+    {
+      combo: 'pagedown',
+      handler: () => moveCursor('pgdn', false),
+      description: 'hotkey.pgdn',
+    },
+    {
+      combo: 'shift+pageup',
+      handler: () => moveCursor('pgup', true),
+      description: 'hotkey.extend_pgup',
+    },
+    {
+      combo: 'shift+pagedown',
+      handler: () => moveCursor('pgdn', true),
+      description: 'hotkey.extend_pgdn',
+    },
+    {
+      combo: 'cmd+shift+a',
+      handler: onSelectAllVisible,
+      description: 'hotkey.select_all',
+    },
+    // Enter on the cursor row opens the edit dialog (mirrors TO).
+    // Guarded against open dialogs: a global Enter would otherwise hijack the
+    // focused button (Save/Cancel/Confirm) since useKeyboard's skip-in-input
+    // check covers input/textarea/select/contenteditable but not <button>.
+    {
+      combo: 'enter',
+      handler: () => {
+        if (editing.open || helpOpen || settingsOpen) return
+        handleEdit()
+      },
+      description: 'hotkey.edit',
+    },
     { combo: 'e', handler: handleEdit, description: 'hotkey.edit' },
     {
       combo: 'delete',
@@ -910,9 +1171,16 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
     {
       combo: 'esc',
       handler: () => {
-        // Priority 0: clear multi-selection when more than one item is selected.
-        if (selectedIds.size > 1) {
-          setSelectedIds(new Set())
+        // Cascade order (mirrors TO useKeyboard.ts): topmost dismissable layer first.
+        // 1. Context menu → close
+        // 2. Help overlay → close
+        // 3. Edit dialog → close
+        // 4. Settings dialog → close
+        // 5. Multi-selection → clear (anchor cleared too)
+        // 6. Active search → clear
+        // 7. Non-trivial filters → reset to defaults
+        if (contextMenu) {
+          setContextMenu(null)
           return
         }
         if (helpOpen) {
@@ -927,8 +1195,17 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
           setSettingsOpen(false)
           return
         }
+        if (selectedIds.size > 0) {
+          setSelectedIds(new Set())
+          setLastAnchorId(null)
+          return
+        }
         if (filters.search) {
           setFilter('search', '')
+          return
+        }
+        if (isFilterNonTrivial(filters)) {
+          resetFilters()
           return
         }
       },
@@ -1021,14 +1298,23 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
                   onClear={() => setSelectedIds(new Set())}
                 />
               )}
+              <FilterChipsBar
+                filters={filters}
+                setFilters={setAllFilters}
+                resetFilters={resetFilters}
+                contacts={contacts}
+              />
+              <SortBar sort={sort} onToggle={onToggleSort} />
               <div className="flex-1 flex min-h-0">
                 <MainList
+                  ref={mainListRef}
                   contacts={filtered}
                   selectedId={selectedId}
                   selectedIds={selectedIds}
                   onSelect={onSelectRow}
                   onToggleSelection={onToggleSelection}
-                  onNavigate={setSelectedId}
+                  onMarqueeSelect={(next) => setSelectedIds(next)}
+                  onContextMenu={onListContextMenu}
                   onTouch={(id) => void undoable.recordTouch(id)}
                   onSoftDelete={(id) => void handleSoftDelete(id)}
                   onOpenEdit={handleOpenEdit}
@@ -1119,6 +1405,28 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
       <GuideOverlay open={guideOpen} onDismiss={dismissGuide} />
       <HotkeyHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ToastContainer toasts={toasts} onDismiss={dismiss} />
+      {contextMenu &&
+        (() => {
+          const c = contacts.find((x) => x.id === contextMenu.contactId)
+          if (!c) return null
+          return (
+            <ContactContextMenu
+              x={contextMenu.x}
+              y={contextMenu.y}
+              contact={c}
+              selectedIds={selectedIds}
+              inTrash={filters.scope === 'trash'}
+              onClose={() => setContextMenu(null)}
+              onOpenDetail={onCtxOpenDetail}
+              onEdit={onCtxEditOne}
+              onTouch={(ids) => void onCtxTouch(ids)}
+              onToggleHidden={(ids) => void onCtxToggleHidden(ids)}
+              onToggleProtected={(ids) => void onCtxToggleProtected(ids)}
+              onDelete={(ids) => void onCtxDelete(ids)}
+              onRestore={(ids) => void onCtxRestore(ids)}
+            />
+          )
+        })()}
       {ConfirmMount}
       {PromptMount}
     </div>
