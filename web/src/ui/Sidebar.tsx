@@ -333,13 +333,29 @@ export function Sidebar({
                   filters.group === g.id ? setFilter('group', null) : setFilter('group', g.id)
                 }
                 {...(onDropContactOnGroup && {
+                  // Pattern: TaskOrchestrator/tauri-app/src/ui/DayPlanner.tsx:176-202.
+                  // dropEffect on every dragover — required for drop to fire in WebView2.
+                  // setDropTarget is functionally-set so successive same-target dragover
+                  // ticks (60Hz) don't trigger re-renders that flicker the button and
+                  // disturb drag tracking. dragLeave uses relatedTarget to detect a
+                  // *real* leave (cursor moved to outside this button) vs a child-enter
+                  // bounce (cursor crossed a span boundary inside the button).
                   onDragOver: (e: React.DragEvent<HTMLButtonElement>) => {
-                    if (e.dataTransfer.types.includes(DND_MIME)) {
-                      e.preventDefault()
-                      setDropTarget({ kind: 'group', key: g.id })
-                    }
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'copy'
+                    setDropTarget((prev) =>
+                      prev?.kind === 'group' && prev.key === g.id
+                        ? prev
+                        : { kind: 'group', key: g.id },
+                    )
                   },
-                  onDragLeave: () => setDropTarget(null),
+                  onDragLeave: (e: React.DragEvent<HTMLButtonElement>) => {
+                    const next = e.relatedTarget as Node | null
+                    if (next && e.currentTarget.contains(next)) return
+                    setDropTarget((prev) =>
+                      prev?.kind === 'group' && prev.key === g.id ? null : prev,
+                    )
+                  },
                   onDrop: (e: React.DragEvent<HTMLButtonElement>) => {
                     e.preventDefault()
                     const contactId = e.dataTransfer.getData(DND_MIME)
@@ -378,12 +394,21 @@ export function Sidebar({
                 }
                 {...(onDropContactOnTag && {
                   onDragOver: (e: React.DragEvent<HTMLButtonElement>) => {
-                    if (e.dataTransfer.types.includes(DND_MIME)) {
-                      e.preventDefault()
-                      setDropTarget({ kind: 'tag', key: tg.name })
-                    }
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'copy'
+                    setDropTarget((prev) =>
+                      prev?.kind === 'tag' && prev.key === tg.name
+                        ? prev
+                        : { kind: 'tag', key: tg.name },
+                    )
                   },
-                  onDragLeave: () => setDropTarget(null),
+                  onDragLeave: (e: React.DragEvent<HTMLButtonElement>) => {
+                    const next = e.relatedTarget as Node | null
+                    if (next && e.currentTarget.contains(next)) return
+                    setDropTarget((prev) =>
+                      prev?.kind === 'tag' && prev.key === tg.name ? null : prev,
+                    )
+                  },
                   onDrop: (e: React.DragEvent<HTMLButtonElement>) => {
                     e.preventDefault()
                     const contactId = e.dataTransfer.getData(DND_MIME)
@@ -426,12 +451,21 @@ export function Sidebar({
                 }
                 {...(onDropContactOnOrganization && {
                   onDragOver: (e: React.DragEvent<HTMLButtonElement>) => {
-                    if (e.dataTransfer.types.includes(DND_MIME)) {
-                      e.preventDefault()
-                      setDropTarget({ kind: 'org', key: org.name })
-                    }
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'copy'
+                    setDropTarget((prev) =>
+                      prev?.kind === 'org' && prev.key === org.name
+                        ? prev
+                        : { kind: 'org', key: org.name },
+                    )
                   },
-                  onDragLeave: () => setDropTarget(null),
+                  onDragLeave: (e: React.DragEvent<HTMLButtonElement>) => {
+                    const next = e.relatedTarget as Node | null
+                    if (next && e.currentTarget.contains(next)) return
+                    setDropTarget((prev) =>
+                      prev?.kind === 'org' && prev.key === org.name ? null : prev,
+                    )
+                  },
                   onDrop: (e: React.DragEvent<HTMLButtonElement>) => {
                     e.preventDefault()
                     const contactId = e.dataTransfer.getData(DND_MIME)
