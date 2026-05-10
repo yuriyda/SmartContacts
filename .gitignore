@@ -24,3 +24,7 @@ dev-dist/
 
 # Planning artifacts live in /workspace/docs/, not in the repo
 docs/
+
+# Tauri / Rust build artifacts (Cargo.lock is tracked)
+tauri/src-tauri/target/
+tauri/src-tauri/gen/
