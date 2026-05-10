@@ -6,6 +6,8 @@ Decentralized, offline-first contact manager. Three distribution targets share `
 - **`tauri/`** — desktop release (Win / macOS / Linux) via Tauri 2 with native SQLite.
 - **`pwa/`** — mobile release (Android first) via Capacitor 6 with native SQLite.
 
+![Smart Contacts desktop screenshot](Screenshot.jpg)
+
 Spec: `docs/superpowers/specs/2026-04-29-contacts-app-design.md`. Distribution targets — §22.
 
 ## Workspace layout
