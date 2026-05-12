@@ -34,7 +34,7 @@ export interface DryRunModalProps {
 // Helper: display name from a NormalizedContact-like object
 // ---------------------------------------------------------------------------
 
-function label(obj: { displayName?: string; googleResourceName: string }): string {
+function label(obj: { displayName?: string | undefined; googleResourceName: string }): string {
   return obj.displayName?.trim() || obj.googleResourceName
 }
 
