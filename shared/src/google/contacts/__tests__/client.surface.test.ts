@@ -18,7 +18,7 @@ describe('GoogleContactsClient surface (RO-INVARIANT L6.2)', () => {
     /^(create|update|delete|patch|post|batch(Update|Delete)|put|remove|destroy|send|push|upload|insert)/i
 
   it('has no methods whose name implies write operations', () => {
-    const proto = GoogleContactsClient.prototype as Record<string, unknown>
+    const proto = GoogleContactsClient.prototype as unknown as Record<string, unknown>
     const methodNames = Object.getOwnPropertyNames(proto).filter(
       (n) => n !== 'constructor' && typeof proto[n] === 'function',
     )
@@ -27,7 +27,7 @@ describe('GoogleContactsClient surface (RO-INVARIANT L6.2)', () => {
   })
 
   it('exposes exactly the four read methods (excluding known private helpers)', () => {
-    const proto = GoogleContactsClient.prototype as Record<string, unknown>
+    const proto = GoogleContactsClient.prototype as unknown as Record<string, unknown>
     const expected = ['listConnections', 'getPerson', 'listContactGroups', 'getContactGroup']
     const actual = Object.getOwnPropertyNames(proto)
       .filter(
