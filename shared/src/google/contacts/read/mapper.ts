@@ -4,6 +4,10 @@
 // Do not import runtime DB or fetch utilities here.
 // All normalization rules (phone stripping, email lowercasing) are documented
 // inline. Replace phone normalization with libphonenumber if added as a dep.
+//
+// contactRowToNormalized: converts a local Contact row to NormalizedContact for
+// the pull-engine's "ours" side. Local-only fields (tags, reminders, etc.) are
+// intentionally omitted — NormalizedContact only carries Google-intersecting fields.
 
 import type {
   Person,
@@ -17,6 +21,7 @@ import type {
   NormalizedUrl,
   NormalizedImClient,
 } from './types.js'
+import type { Contact } from '../../../types.js'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -187,5 +192,111 @@ export function personToNormalized(p: Person): NormalizedContact {
     photoUrl,
     photoContentHash,
     labelResourceNames,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Local Contact row → NormalizedContact
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a local Contact row to a NormalizedContact for the pull-engine "ours" side.
+ *
+ * Local-only fields (tags, customFields, priority, protected, hidden, socialDetected,
+ * reminders, lastContactedAt, preferredChannel, relationsInternal, createdAt, updatedAt,
+ * deletedAt, lamportTs, deviceId) are intentionally absent from NormalizedContact and
+ * are skipped here.
+ *
+ * labelResourceNames is set to [] — labels live in google_label_memberships, not on the
+ * contact row. Per INV-4 the differ handles label three-way merge via theirLabelMemberships,
+ * not via ours's labelResourceNames.
+ */
+export function contactRowToNormalized(c: Contact): NormalizedContact {
+  // Map phones: Contact.Phone has { value, type?, primary? } →
+  // NormalizedPhone has { value, type?, label? }. `primary` is local-only; `label` is absent.
+  const phones: NormalizedPhone[] = (c.phones ?? []).map((p) => ({
+    value: p.value,
+    type: p.type,
+    label: undefined,
+  }))
+
+  // Map emails: same shape difference as phones.
+  const emails: NormalizedEmail[] = (c.emails ?? []).map((e) => ({
+    value: e.value,
+    type: e.type,
+    label: undefined,
+  }))
+
+  // Map addresses: Contact.PostalAddress has { street?, city?, region?, postal?, country?, type?, primary? }
+  // NormalizedAddress has { street?, city?, region?, postal?, country?, type? }. Drop primary.
+  const addresses: NormalizedAddress[] = (c.addresses ?? []).map((a) => ({
+    street: a.street,
+    city: a.city,
+    region: a.region,
+    postal: a.postal,
+    country: a.country,
+    type: a.type,
+  }))
+
+  // Map organizations: shapes are identical for shared fields.
+  const organizations: NormalizedOrganization[] = (c.organizations ?? []).map((o) => ({
+    name: o.name,
+    title: o.title,
+    department: o.department,
+    startDate: o.startDate,
+    endDate: o.endDate,
+    current: o.current,
+  }))
+
+  // Map events: Contact.CalendarEvent has { date: string, type: 'birthday' | 'anniversary' | 'custom' }
+  // NormalizedEvent has { type: string, date: string }. Compatible; just reorder.
+  const events: NormalizedEvent[] = (c.events ?? []).map((e) => ({
+    type: e.type,
+    date: e.date,
+  }))
+
+  // Map urls: Contact.Url has { value, type? } — same as NormalizedUrl.
+  const urls: NormalizedUrl[] = (c.urls ?? []).map((u) => ({
+    value: u.value,
+    type: u.type,
+  }))
+
+  // Map imClients: Contact.ImClient has { protocol, handle } — same as NormalizedImClient.
+  const imClients: NormalizedImClient[] = (c.imClients ?? []).map((im) => ({
+    protocol: im.protocol,
+    handle: im.handle,
+  }))
+
+  return {
+    googleResourceName: c.googleResourceName ?? '',
+    etag: c.googleEtag ?? '',
+    // updateTime is Google's server-side timestamp — not stored on Contact row.
+    updateTime: '',
+    displayName: c.displayName,
+    givenName: c.givenName,
+    familyName: c.familyName,
+    middleName: c.middleName,
+    honorificPrefix: c.honorificPrefix,
+    honorificSuffix: c.honorificSuffix,
+    phoneticGiven: c.phoneticGiven,
+    phoneticFamily: c.phoneticFamily,
+    nickname: c.nickname,
+    phones,
+    emails,
+    addresses,
+    events,
+    organizations,
+    urls,
+    imClients,
+    notesMd: c.notesMd,
+    userDefined: c.userDefined ?? {},
+    locale: c.locale,
+    gender: c.gender,
+    occupation: c.occupation,
+    // photoUrl is not stored on Contact row — only photoContentHash via avatarHash.
+    photoUrl: null,
+    photoContentHash: c.avatarHash ?? null,
+    // Labels live in google_label_memberships; per INV-4 left empty here.
+    labelResourceNames: [],
   }
 }

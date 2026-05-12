@@ -62,3 +62,9 @@ export {
   type ConflictRow,
   type NewConflict,
 } from './google/contacts/read/conflict-repo'
+export type { TokenStore } from './google/contacts/oauth/token-store-tauri'
+export {
+  makeGoogleSyncRuntime,
+  type GoogleSyncRuntime,
+  type MakeGoogleSyncRuntimeOpts,
+} from './google/contacts/factory'

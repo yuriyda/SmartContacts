@@ -1,10 +1,12 @@
-// Tests for mapper.ts — People API Person → NormalizedContact.
+// Tests for mapper.ts — People API Person → NormalizedContact, and
+// Contact row → NormalizedContact (contactRowToNormalized).
 // Run with: pnpm --filter @smart-contacts/shared test
 // Each fixture covers a distinct scenario; see comments before each describe block.
 
 import { describe, it, expect } from 'vitest'
-import { personToNormalized } from './mapper.js'
+import { personToNormalized, contactRowToNormalized } from './mapper.js'
 import type { Person } from './types.js'
+import type { Contact } from '../../../types.js'
 
 // ---------------------------------------------------------------------------
 // Fixture A — minimal: only displayName present
@@ -387,5 +389,211 @@ describe('gender field', () => {
       genders: [{ value: 'female' }],
     }
     expect(personToNormalized(person).gender).toBe('female')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// contactRowToNormalized tests
+// ---------------------------------------------------------------------------
+
+describe('contactRowToNormalized: fully-populated Contact', () => {
+  const fullContact: Contact = {
+    id: '01HZFAKEULID00000000000001',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-05-01T00:00:00Z',
+    lamportTs: 3,
+    deviceId: 'device-abc',
+    // Name fields
+    givenName: 'Jane',
+    familyName: 'Doe',
+    middleName: 'Marie',
+    honorificPrefix: 'Dr.',
+    honorificSuffix: 'PhD',
+    phoneticGiven: 'JAYN',
+    phoneticFamily: 'DOH',
+    displayName: 'Dr. Jane Doe PhD',
+    nickname: 'JD',
+    // Multi-valued
+    phones: [{ value: '+15551234567', type: 'mobile', primary: true }],
+    emails: [{ value: 'jane@example.com', type: 'work' }],
+    addresses: [
+      {
+        street: '1 Main St',
+        city: 'Springfield',
+        region: 'IL',
+        postal: '62701',
+        country: 'USA',
+        type: 'home',
+      },
+    ],
+    events: [{ date: '1990-06-15', type: 'birthday' }],
+    organizations: [
+      {
+        name: 'Acme',
+        title: 'CEO',
+        department: 'Exec',
+        current: true,
+        startDate: '2020-01-01',
+        endDate: null,
+      },
+    ],
+    urls: [{ value: 'https://jane.example.com', type: 'homepage' }],
+    imClients: [{ protocol: 'telegram', handle: '@jane' }],
+    // Single-valued
+    notesMd: 'Some notes',
+    userDefined: { key1: 'val1' },
+    locale: 'en-US',
+    gender: 'Female',
+    occupation: 'Engineer',
+    // Google integration
+    googleResourceName: 'people/c999',
+    googleEtag: 'etag-row-test',
+    googleLastSyncedAt: '2026-05-10T00:00:00Z',
+    avatarHash: 'sha256-abc',
+    // Local-only fields (should NOT appear in NormalizedContact)
+    tags: ['vip', 'friend'],
+    priority: 1,
+    protected: true,
+    hidden: false,
+    reminders: [{ id: '01HZFAKEULID00000000000002', date: '2026-06-01', text: 'Call Jane' }],
+  }
+
+  it('maps Google identity fields', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.googleResourceName).toBe('people/c999')
+    expect(nc.etag).toBe('etag-row-test')
+    expect(nc.updateTime).toBe('')
+  })
+
+  it('maps all scalar name fields', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.givenName).toBe('Jane')
+    expect(nc.familyName).toBe('Doe')
+    expect(nc.middleName).toBe('Marie')
+    expect(nc.honorificPrefix).toBe('Dr.')
+    expect(nc.honorificSuffix).toBe('PhD')
+    expect(nc.phoneticGiven).toBe('JAYN')
+    expect(nc.phoneticFamily).toBe('DOH')
+    expect(nc.displayName).toBe('Dr. Jane Doe PhD')
+    expect(nc.nickname).toBe('JD')
+  })
+
+  it('maps phones (drops primary, label is undefined)', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.phones).toHaveLength(1)
+    expect(nc.phones[0]).toEqual({ value: '+15551234567', type: 'mobile', label: undefined })
+    expect('primary' in (nc.phones[0] ?? {})).toBe(false)
+  })
+
+  it('maps emails', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.emails).toHaveLength(1)
+    expect(nc.emails[0]?.value).toBe('jane@example.com')
+    expect(nc.emails[0]?.type).toBe('work')
+  })
+
+  it('maps addresses (drops primary)', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.addresses).toHaveLength(1)
+    expect(nc.addresses[0]).toEqual({
+      street: '1 Main St',
+      city: 'Springfield',
+      region: 'IL',
+      postal: '62701',
+      country: 'USA',
+      type: 'home',
+    })
+  })
+
+  it('maps events', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.events).toHaveLength(1)
+    expect(nc.events[0]).toEqual({ type: 'birthday', date: '1990-06-15' })
+  })
+
+  it('maps organizations', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.organizations).toHaveLength(1)
+    expect(nc.organizations[0]?.name).toBe('Acme')
+    expect(nc.organizations[0]?.current).toBe(true)
+  })
+
+  it('maps urls', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.urls[0]).toEqual({ value: 'https://jane.example.com', type: 'homepage' })
+  })
+
+  it('maps imClients', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.imClients[0]).toEqual({ protocol: 'telegram', handle: '@jane' })
+  })
+
+  it('maps single-valued fields', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.notesMd).toBe('Some notes')
+    expect(nc.userDefined).toEqual({ key1: 'val1' })
+    expect(nc.locale).toBe('en-US')
+    expect(nc.gender).toBe('Female')
+    expect(nc.occupation).toBe('Engineer')
+  })
+
+  it('maps photoContentHash from avatarHash, photoUrl is null', () => {
+    const nc = contactRowToNormalized(fullContact)
+    expect(nc.photoUrl).toBeNull()
+    expect(nc.photoContentHash).toBe('sha256-abc')
+  })
+
+  it('labelResourceNames is always empty', () => {
+    expect(contactRowToNormalized(fullContact).labelResourceNames).toEqual([])
+  })
+
+  it('local-only fields are absent from NormalizedContact', () => {
+    const nc = contactRowToNormalized(fullContact) as unknown as Record<string, unknown>
+    expect('tags' in nc).toBe(false)
+    expect('priority' in nc).toBe(false)
+    expect('protected' in nc).toBe(false)
+    expect('reminders' in nc).toBe(false)
+    expect('lamportTs' in nc).toBe(false)
+    expect('deviceId' in nc).toBe(false)
+    expect('createdAt' in nc).toBe(false)
+  })
+})
+
+describe('contactRowToNormalized: Contact with no Google fields', () => {
+  const localOnly: Contact = {
+    id: '01HZFAKEULID00000000000003',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    lamportTs: 0,
+    deviceId: 'device-local',
+    displayName: 'Local Person',
+  }
+
+  it('googleResourceName is empty string when absent', () => {
+    expect(contactRowToNormalized(localOnly).googleResourceName).toBe('')
+  })
+
+  it('etag is empty string when no googleEtag', () => {
+    expect(contactRowToNormalized(localOnly).etag).toBe('')
+  })
+
+  it('photoContentHash is null when no avatarHash', () => {
+    expect(contactRowToNormalized(localOnly).photoContentHash).toBeNull()
+  })
+
+  it('empty arrays for all multi-valued fields', () => {
+    const nc = contactRowToNormalized(localOnly)
+    expect(nc.phones).toEqual([])
+    expect(nc.emails).toEqual([])
+    expect(nc.addresses).toEqual([])
+    expect(nc.events).toEqual([])
+    expect(nc.organizations).toEqual([])
+    expect(nc.urls).toEqual([])
+    expect(nc.imClients).toEqual([])
+    expect(nc.labelResourceNames).toEqual([])
+  })
+
+  it('userDefined defaults to empty object', () => {
+    expect(contactRowToNormalized(localOnly).userDefined).toEqual({})
   })
 })
