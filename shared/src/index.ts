@@ -56,3 +56,9 @@ export * from './sync/sync'
 export * from './sync/syncEngine'
 export * from './google/driveAppdata'
 export * from './google/oauth'
+export type { Changeset, ConflictRecord, FieldUpdate } from './google/contacts/read/differ'
+export {
+  ConflictRepo,
+  type ConflictRow,
+  type NewConflict,
+} from './google/contacts/read/conflict-repo'
