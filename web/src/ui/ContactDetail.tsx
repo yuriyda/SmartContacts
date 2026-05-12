@@ -13,6 +13,7 @@ import type {
   ContactTask,
   CustomFieldDef,
   Interaction,
+  LabelRepo,
   Ulid,
 } from '@smart-contacts/shared'
 import { computeDisplayName, fmtDate, timeAgo, ulid } from '@smart-contacts/shared'
@@ -42,6 +43,8 @@ import {
 import { InteractionComposer } from './InteractionComposer'
 import { TaskComposer } from './TaskComposer'
 import type { ConfirmOptions } from './useConfirm'
+import { ImportedFromGoogleBadge } from './sync/ImportedFromGoogleBadge'
+import { GoogleLabelsSection } from './sync/GoogleLabelsSection'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -72,6 +75,8 @@ export interface ContactDetailProps {
   onTaskSoftDelete?: (id: string) => Promise<void>
   /** Promise-based confirm function threaded from SmartContactsApp to avoid mounting a second dialog host. */
   confirm?: (opts: ConfirmOptions) => Promise<boolean>
+  /** Optional LabelRepo for showing Google Labels section. Null when Google sync is unavailable. */
+  labelRepo?: LabelRepo | null
 }
 
 // ---------------------------------------------------------------------------
@@ -543,6 +548,7 @@ export function ContactDetail({
   onTaskReopen,
   onTaskSoftDelete,
   confirm,
+  labelRepo = null,
 }: ContactDetailProps) {
   const { TC, t, locale } = useApp()
   const [composerOpen, setComposerOpen] = useState(false)
@@ -606,8 +612,11 @@ export function ContactDetail({
         <div className="flex items-start gap-3 mb-3">
           <ContactAvatar id={contact.id} name={displayName} size={64} />
           <div className="flex-1 min-w-0">
-            <h2 className={`text-xl font-semibold leading-tight truncate ${TC.text}`}>
-              {displayName}
+            <h2
+              className={`text-xl font-semibold leading-tight ${TC.text} flex items-center gap-1 flex-wrap`}
+            >
+              <span className="truncate">{displayName}</span>
+              <ImportedFromGoogleBadge show={!!contact.googleResourceName} />
             </h2>
             {contact.nickname && (
               <p className={`text-sm ${TC.textMuted} mt-0.5`}>&quot;{contact.nickname}&quot;</p>
@@ -1033,6 +1042,9 @@ export function ContactDetail({
           </div>
         </DetailSection>
       )}
+
+      {/* ── Google Labels (read-only, INV-4) ── */}
+      {labelRepo != null && <GoogleLabelsSection contactId={contact.id} labelRepo={labelRepo} />}
 
       {/* ── Notes ── */}
       {contact.notesMd && (

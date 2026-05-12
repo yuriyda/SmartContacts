@@ -68,3 +68,4 @@ export {
   type GoogleSyncRuntime,
   type MakeGoogleSyncRuntimeOpts,
 } from './google/contacts/factory'
+export { LabelRepo, type GoogleLabelRow } from './google/contacts/read/label-repo'

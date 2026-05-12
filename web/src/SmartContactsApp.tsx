@@ -1363,6 +1363,7 @@ function ScreenBody({
                   onTaskReopen={(id) => undoable.recordTaskReopen(id)}
                   onTaskSoftDelete={(id) => undoable.recordTaskSoftDelete(id)}
                   confirm={confirm}
+                  labelRepo={googleSync?.repos.label ?? null}
                 />
               </div>
             </>

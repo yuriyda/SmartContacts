@@ -22,6 +22,7 @@ import { PriorityBadge, TagPill } from './badges'
 import { ContactAvatar } from './ContactAvatar'
 import { DND_MIME, isTouchDevice } from './dnd'
 import { Lock, EyeOff } from './icons'
+import { ImportedFromGoogleBadge } from './sync/ImportedFromGoogleBadge'
 
 interface ContactRowProps {
   contact: Contact
@@ -165,6 +166,7 @@ export function ContactRow({
           {contact.hidden && (
             <EyeOff size={11} className="inline-block ml-1 text-sky-400" aria-label="Hidden" />
           )}
+          <ImportedFromGoogleBadge show={!!contact.googleResourceName} />
         </div>
         {density !== 'compact' && (
           <div className={`truncate text-[11px] ${TC.textMuted}`}>
