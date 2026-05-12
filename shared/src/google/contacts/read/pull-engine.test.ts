@@ -257,7 +257,7 @@ describe('PullEngine: happy path — two new contacts applied', () => {
   })
 
   it('result has appliedCount=2', async () => {
-    const result = await new PullEngine(makeDeps(db, [])).run({ confirmFn: async () => false })
+    await new PullEngine(makeDeps(db, [])).run({ confirmFn: async () => false })
     // The DB already has 2 contacts → second run with empty persons returns up_to_date
     // Just verify the first run result indirectly via DB state
     const rows = await db.select<{ google_resource_name: string }>(
@@ -523,7 +523,6 @@ describe('PullEngine: applier throws — result is failed with error logged', ()
 
     const syncLogRepo = new SyncLogRepo(db)
     const snapshotRepo = new SnapshotRepo(db)
-    const conflictRepo = new ConflictRepo(db)
 
     // Applier that always throws
     const brokenApplier = {

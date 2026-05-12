@@ -11,7 +11,6 @@
 //  - No `any` types.
 //  - All comments must remain in English.
 
-import { ulid } from '../../../ulid'
 import type { GoogleContactsClient } from './client'
 import type { fetchAll } from './fetcher'
 import type { computeChangeset, Changeset } from './differ'
