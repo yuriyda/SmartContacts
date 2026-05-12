@@ -15,7 +15,8 @@ import { applyMigrations } from '../../../db/migrations'
 import { makeContactsRepo } from '../../../db/contactsRepo'
 import { ulid } from '../../../ulid'
 import { Applier } from './applier'
-import type { Changeset, CleanUpdate, ConflictEntry } from './applier'
+import type { Changeset } from './applier'
+import type { FieldUpdate, ConflictRecord } from './differ'
 import { SnapshotRepo } from './snapshot-repo'
 import { ConflictRepo } from './conflict-repo'
 import { SyncLogRepo } from './sync-log-repo'
@@ -96,6 +97,8 @@ function emptyChangeset(runId = 'run-1'): Changeset {
     cleanDeletes: [],
     conflicts: [],
     labels: { full: [], memberships: new Map() },
+    updatedNormalized: new Map(),
+    counts: { inserts: 0, updates: 0, deletes: 0, conflicts: 0 },
   }
 }
 
@@ -179,21 +182,23 @@ describe('Applier: cleanUpdate modifies contact field and snapshot', () => {
     })
 
     const applier = makeApplier(db)
-    const updatedNormalized = makeNormalized({
+    const normalized = makeNormalized({
       googleResourceName: 'people/update-1',
       etag: 'new-etag',
       updateTime: '2026-05-10T00:00:00Z',
       displayName: 'Alice Updated',
     })
-    const update: CleanUpdate = {
+    const fieldUpdate: FieldUpdate = {
       contactId,
       googleResourceName: 'people/update-1',
-      normalized: updatedNormalized,
-      fieldUpdates: [{ columnName: 'display_name', newValue: 'Alice Updated' }],
+      fieldPath: 'displayName',
+      newValue: 'Alice Updated',
     }
     const changeset: Changeset = {
       ...emptyChangeset('run-update'),
-      cleanUpdates: [update],
+      cleanUpdates: [fieldUpdate],
+      updatedNormalized: new Map([['people/update-1', normalized]]),
+      counts: { inserts: 0, updates: 1, deletes: 0, conflicts: 0 },
     }
     await applier.apply(changeset)
   })
@@ -269,7 +274,7 @@ describe('Applier: conflicts create pending sync_conflicts rows', () => {
     contactId = await seedContact(db, 'people/conflict-1')
 
     const applier = makeApplier(db)
-    const conflict: ConflictEntry = {
+    const conflict: ConflictRecord = {
       contactId,
       googleResourceName: 'people/conflict-1',
       fieldPath: 'display_name',
@@ -389,7 +394,7 @@ describe('Applier: transaction atomicity — error triggers rollback', () => {
 
     const applier = makeApplier(db)
     const normalized = makeNormalized({ googleResourceName: 'people/atomic-1' })
-    const invalidConflict: ConflictEntry = {
+    const invalidConflict: ConflictRecord = {
       // This contact_id does NOT exist → FK violation → SQL error mid-transaction
       contactId: 'non-existent-contact-id-xxxxxxxxxxxxxxx',
       googleResourceName: 'people/atomic-1',

@@ -289,50 +289,11 @@ export interface NormalizedContact {
 }
 
 // ---------------------------------------------------------------------------
-// Changeset and ConflictRecord — minimal shapes for differ/applier.
-// Spec §3.3 and §4.2. Will be refined in T12 (differ) and T13 (applier).
+// Changeset and ConflictRecord — re-exported from differ.ts (single source of truth).
+// Spec §3.3 and §4.2. differ.ts owns the canonical definitions.
 // ---------------------------------------------------------------------------
 
-/** A single field-level change to apply to a local contact. */
-export interface FieldChange {
-  field: string
-  /** Serialized JSON of the new value from Google. */
-  newValue: string
-  /** Serialized JSON of the old local value (for audit). */
-  oldValue: string
-}
-
-/** Describes what will happen to one contact during an apply. */
-export interface ContactChange {
-  googleResourceName: string
-  /** 'add' = new contact not in local DB; 'update' = existing; 'delete' = removed from Google. */
-  operation: 'add' | 'update' | 'delete'
-  normalized?: NormalizedContact
-  fieldChanges?: FieldChange[]
-}
-
-/** Full dry-run output written to sync_log before any mutation (INV-2, INV-6). */
-export interface Changeset {
-  pulledAt: string
-  contactChanges: ContactChange[]
-  conflictCount: number
-}
-
-/** One pending conflict row in sync_conflicts (spec §4.2). */
-export interface ConflictRecord {
-  id: string
-  googleResourceName: string
-  field: string
-  /** Serialized JSON of the value in the last-known Google snapshot. */
-  baseValue: string
-  /** Serialized JSON of the current Google value. */
-  theirValue: string
-  /** Serialized JSON of the current local value. */
-  ourValue: string
-  status: 'pending' | 'resolved_ours' | 'resolved_theirs' | 'resolved_merged'
-  createdAt: string
-  resolvedAt?: string | null
-}
+export type { Changeset, ConflictRecord } from './differ.js'
 
 // ---------------------------------------------------------------------------
 // People API v1 — ContactGroup (added for T5 GoogleContactsClient)

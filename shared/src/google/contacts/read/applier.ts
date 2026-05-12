@@ -1,6 +1,9 @@
 // Applier — applies a Changeset atomically to the local DB in one transaction.
 // RO-INVARIANT: INV-2 (changeset applied as a single atomic transaction), INV-6 (only after dry-run + user confirm).
 //
+// Changeset is imported from differ.ts (single source of truth). The Applier owns the
+// SQL-column mapping (fieldPath → columnName) and snapshot hydration internally.
+//
 // Rules:
 //  - ALL inserts/updates/deletes happen inside a single db.transaction() call.
 //  - NO nested db.transaction() calls — repos that use their own transaction are re-instantiated
@@ -19,8 +22,8 @@ import { SnapshotRepo } from './snapshot-repo'
 import { ConflictRepo } from './conflict-repo'
 import type { NewConflict } from './conflict-repo'
 import type { SyncLogRepo } from './sync-log-repo'
-import type { GoogleLabelRow } from './label-repo'
 import type { NormalizedContact } from './types'
+import type { Changeset, FieldUpdate } from './differ'
 
 // ---------------------------------------------------------------------------
 // Minimal contact interface required by Applier (avoids hard dependency on
@@ -33,66 +36,84 @@ export interface ContactsRepoLike {
 }
 
 // ---------------------------------------------------------------------------
-// Changeset — the full shape produced by differ.ts (T12).
-// Defined here so applier.ts has no circular dependency on differ.ts at T13.
-// differ.ts MUST export a compatible type when implemented.
+// Changeset is imported from differ.ts — single source of truth.
+// Re-exported here so existing callers can still import from './applier'.
+// ---------------------------------------------------------------------------
+export type { Changeset, FieldUpdate }
+
+// ---------------------------------------------------------------------------
+// fieldPath → SQL column name mapping
+// (differ uses camelCase field paths; contacts table uses snake_case columns)
 // ---------------------------------------------------------------------------
 
-/** A field-level update to apply to an existing contact. */
-export interface FieldUpdate {
-  /** SQL column name on the `contacts` table, e.g. 'display_name'. */
-  columnName: string
-  /** New serialized value: TEXT (string), JSON-encoded array, or null. */
-  newValue: string | null
+const FIELD_PATH_TO_COLUMN: Readonly<Record<string, string>> = {
+  displayName: 'display_name',
+  givenName: 'given_name',
+  familyName: 'family_name',
+  middleName: 'middle_name',
+  honorificPrefix: 'honorific_prefix',
+  honorificSuffix: 'honorific_suffix',
+  phoneticGiven: 'phonetic_given',
+  phoneticFamily: 'phonetic_family',
+  nickname: 'nickname',
+  notesMd: 'notes_md',
+  locale: 'locale',
+  gender: 'gender',
+  occupation: 'occupation',
+  userDefined: 'user_defined',
+  phones: 'phones',
+  emails: 'emails',
+  addresses: 'addresses',
+  events: 'events',
+  organizations: 'organizations',
+  urls: 'urls',
+  imClients: 'im_clients',
+  'photos[0]': 'avatar_hash',
+  photoUrl: 'avatar_hash',
+  photoContentHash: 'avatar_hash',
 }
 
-/** One clean update: no conflict, apply theirs. */
-export interface CleanUpdate {
-  /** The local contact row id. */
-  contactId: string
-  googleResourceName: string
-  /** Normalized contact with all current Google values (used to update snapshot). */
-  normalized: NormalizedContact
-  /** Specific field-level changes to apply to the contacts row. */
-  fieldUpdates: FieldUpdate[]
-}
-
-/** Conflict entry to be inserted into sync_conflicts. */
-export interface ConflictEntry {
-  contactId: string
-  googleResourceName: string
-  fieldPath: string
-  baseValueJson: string | null
-  googleValueJson: string | null
-  localValueJson: string
-  detectedAt: string
-}
-
-/** Labels section of the Changeset. */
-export interface ChangesetLabels {
-  /** Full replacement set for google_labels table. */
-  full: GoogleLabelRow[]
-  /** Per-contact label membership: contactId → [labelResourceName, ...]. */
-  memberships: Map<string, string[]>
+/** Resolve fieldPath to SQL column name; returns null for unknown paths (they are skipped). */
+function resolveColumn(fieldPath: string): string | null {
+  const direct = FIELD_PATH_TO_COLUMN[fieldPath]
+  if (direct !== undefined) return direct
+  // Array sub-paths (e.g. 'phones[+1.23..]') → use the array column
+  const arrayBase = fieldPath.split('[')[0]
+  if (arrayBase !== undefined && FIELD_PATH_TO_COLUMN[arrayBase] !== undefined) {
+    return FIELD_PATH_TO_COLUMN[arrayBase] ?? null
+  }
+  return null
 }
 
 /**
- * Full Changeset as produced by differ.ts.
- * All operations are pre-classified; no DB reads required during apply.
+ * Encode a FieldUpdate newValue to a SQL-compatible value.
+ * Arrays and objects are JSON-encoded; scalars are passed as-is.
  */
-export interface Changeset {
-  /** Unique identifier for this sync run (UUID). */
-  runId: string
-  /** New contacts to insert (no local row exists). */
-  cleanInserts: NormalizedContact[]
-  /** Existing contacts to update (clean merge, no conflict). */
-  cleanUpdates: CleanUpdate[]
-  /** Google resource names of contacts to delete (cascades to related tables). */
-  cleanDeletes: string[]
-  /** Field-level conflicts to queue. */
-  conflicts: ConflictEntry[]
-  /** Google labels and memberships (always full-replaced). */
-  labels: ChangesetLabels
+function encodeFieldValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return JSON.stringify(value)
+}
+
+/**
+ * Group FieldUpdates for a single contact by unique column name.
+ * Duplicates for same column are de-duplicated (last write wins).
+ */
+function groupUpdatesByColumn(
+  updates: FieldUpdate[],
+): Array<{ columnName: string; encodedValue: string | null }> {
+  const seen = new Map<string, string | null>()
+  for (const u of updates) {
+    const col = resolveColumn(u.fieldPath)
+    if (col !== null) {
+      seen.set(col, encodeFieldValue(u.newValue))
+    }
+  }
+  return Array.from(seen.entries()).map(([columnName, encodedValue]) => ({
+    columnName,
+    encodedValue,
+  }))
 }
 
 // ---------------------------------------------------------------------------
@@ -294,35 +315,54 @@ export class Applier {
         }
 
         // -- (b) cleanUpdates: update contacts + snapshots --
-        for (const update of changeset.cleanUpdates) {
-          // Apply each field change to the contacts row
-          if (update.fieldUpdates.length > 0) {
-            const setClauses = update.fieldUpdates.map((fu) => `${fu.columnName} = ?`).join(', ')
-            const params: unknown[] = [
-              ...update.fieldUpdates.map((fu) => fu.newValue),
-              update.contactId,
-            ]
+        // Group FieldUpdates by contactId so each contact gets one UPDATE statement.
+        const updatesByContactId = new Map<
+          string,
+          { googleResourceName: string; updates: FieldUpdate[] }
+        >()
+        for (const fu of changeset.cleanUpdates) {
+          const existing = updatesByContactId.get(fu.contactId)
+          if (existing !== undefined) {
+            existing.updates.push(fu)
+          } else {
+            updatesByContactId.set(fu.contactId, {
+              googleResourceName: fu.googleResourceName,
+              updates: [fu],
+            })
+          }
+        }
+
+        for (const [contactId, { googleResourceName, updates }] of updatesByContactId) {
+          // Resolve semantic fieldPaths → SQL columns
+          const colUpdates = groupUpdatesByColumn(updates)
+
+          if (colUpdates.length > 0) {
+            const setClauses = colUpdates.map((cu) => `${cu.columnName} = ?`).join(', ')
+            const params: unknown[] = colUpdates.map((cu) => cu.encodedValue)
             await tx.execute(
               `UPDATE contacts SET ${setClauses}, updated_at = ?, google_last_synced_at = ? WHERE id = ?`,
-              [...params.slice(0, -1), now, now, update.contactId],
+              [...params, now, now, contactId],
             )
           } else {
-            // No field changes but snapshot still needs updating (e.g. etag changed only)
+            // No recognized column changes — still update timestamps
             await tx.execute(
               `UPDATE contacts SET google_last_synced_at = ?, updated_at = ? WHERE id = ?`,
-              [now, now, update.contactId],
+              [now, now, contactId],
             )
           }
 
-          // Upsert snapshot with latest normalized data
-          const snapshotRepo = new SnapshotRepo(tx)
-          await snapshotRepo.upsert({
-            googleResourceName: update.googleResourceName,
-            etag: update.normalized.etag,
-            updateTime: update.normalized.updateTime,
-            payloadJson: JSON.stringify(update.normalized),
-            lastSyncedAt: now,
-          })
+          // Upsert snapshot with latest normalized data (from updatedNormalized map)
+          const normalized = changeset.updatedNormalized.get(googleResourceName)
+          if (normalized !== undefined) {
+            const snapshotRepo = new SnapshotRepo(tx)
+            await snapshotRepo.upsert({
+              googleResourceName,
+              etag: normalized.etag,
+              updateTime: normalized.updateTime,
+              payloadJson: JSON.stringify(normalized),
+              lastSyncedAt: now,
+            })
+          }
 
           appliedCount++
         }

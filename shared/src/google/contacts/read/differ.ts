@@ -55,12 +55,18 @@ export interface Changeset {
   runId: string
   cleanInserts: NormalizedContact[]
   cleanUpdates: FieldUpdate[]
-  cleanDeletes: string[] // contact IDs
+  cleanDeletes: string[] // contact IDs (googleResourceName used as surrogate)
   conflicts: ConflictRecord[]
   labels: {
     full: GoogleLabelRow[]
     memberships: Map<string, string[]> // contactId -> labelResourceNames
   }
+  /**
+   * Map from googleResourceName → current Google NormalizedContact for contacts
+   * that have cleanUpdates. Used by the applier to upsert snapshots after updates.
+   * Not used for inserts (those use cleanInserts directly).
+   */
+  updatedNormalized: Map<string, NormalizedContact>
   counts: {
     inserts: number
     updates: number
@@ -659,6 +665,8 @@ export function computeChangeset(input: ComputeChangesetInput): Changeset {
   const cleanUpdates: FieldUpdate[] = []
   const cleanDeletes: string[] = [] // googleResourceName (applier maps to contactId)
   const conflicts: ConflictRecord[] = []
+  // Track the current Google NormalizedContact for each contact that has cleanUpdates.
+  const updatedNormalized = new Map<string, NormalizedContact>()
 
   // --- Process theirs (insertions + updates) ---
   for (const theirsContact of theirs) {
@@ -702,6 +710,10 @@ export function computeChangeset(input: ComputeChangesetInput): Changeset {
       )
       cleanUpdates.push(...cu)
       conflicts.push(...cf)
+      // Record theirs for applier snapshot upsert (only if there are actual updates)
+      if (cu.length > 0) {
+        updatedNormalized.set(rn, theirsContact)
+      }
     }
   }
 
@@ -758,6 +770,7 @@ export function computeChangeset(input: ComputeChangesetInput): Changeset {
     cleanDeletes,
     conflicts,
     labels,
+    updatedNormalized,
     counts: {
       inserts: cleanInserts.length,
       updates: cleanUpdates.length,
