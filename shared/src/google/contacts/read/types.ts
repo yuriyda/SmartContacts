@@ -333,3 +333,39 @@ export interface ConflictRecord {
   createdAt: string
   resolvedAt?: string | null
 }
+
+// ---------------------------------------------------------------------------
+// People API v1 — ContactGroup (added for T5 GoogleContactsClient)
+// ---------------------------------------------------------------------------
+
+export interface ContactGroupMetadata {
+  updateTime?: string
+  deleted?: boolean
+}
+
+export interface ContactGroup {
+  resourceName: string
+  etag: string
+  metadata?: ContactGroupMetadata
+  groupType?: 'SYSTEM_CONTACT_GROUP' | 'USER_CONTACT_GROUP'
+  name: string
+  formattedName?: string
+  memberCount?: number
+}
+
+// ---------------------------------------------------------------------------
+// People API v1 — paginated list responses (added for T5 GoogleContactsClient)
+// ---------------------------------------------------------------------------
+
+export interface ListConnectionsResponse {
+  connections?: Person[]
+  nextPageToken?: string
+  nextSyncToken?: string
+  totalPeople?: number
+}
+
+export interface ListContactGroupsResponse {
+  contactGroups?: ContactGroup[]
+  nextPageToken?: string
+  totalItems?: number
+}
