@@ -8,8 +8,6 @@ Decentralized, offline-first contact manager. Three distribution targets share `
 
 ![Smart Contacts desktop screenshot](Screenshot.jpg)
 
-Spec: `docs/superpowers/specs/2026-04-29-contacts-app-design.md`. Distribution targets — §22.
-
 ## Workspace layout
 
 ```
@@ -193,6 +191,5 @@ Pattern modeled after TaskOrchestrator's `/home/node/linux-deps/` mirror.
 ## Contributing / agent runs
 
 - All commits English. No "Co-Authored-By: Claude" attribution.
-- Plans live in `docs/superpowers/plans/`, specs in `docs/superpowers/specs/`.
 - Tests: `pnpm test` (vitest in `shared/`).
 - Lint/format: `pnpm lint` (eslint + prettier).
