@@ -21,6 +21,7 @@ import { CustomFieldsTab } from './settings/CustomFieldsTab'
 import { BackupTab } from './settings/BackupTab'
 import { AboutTab } from './settings/AboutTab'
 import { GoogleSyncTab } from './settings/GoogleSyncTab'
+import { GoogleContactsTab } from './settings/GoogleContactsTab'
 import { OnboardingTab } from './settings/OnboardingTab'
 import { PrivacyTab } from './settings/PrivacyTab'
 import { NetworkTab } from './settings/NetworkTab'
@@ -37,6 +38,7 @@ type TabKey =
   | 'privacy'
   | 'network'
   | 'google_sync'
+  | 'google_contacts'
   | 'about'
   | 'onboarding'
 
@@ -70,6 +72,7 @@ const TABS: { key: TabKey; labelKey: string }[] = [
   { key: 'privacy', labelKey: 'settings.tabs.privacy' },
   { key: 'network', labelKey: 'settings.tabs.network' },
   { key: 'google_sync', labelKey: 'settings.tabs.google_sync' },
+  { key: 'google_contacts', labelKey: 'settings.tabs.google_contacts' },
   { key: 'about', labelKey: 'settings.tabs.about' },
   { key: 'onboarding', labelKey: 'settings.tabs.onboarding' },
 ]
@@ -210,6 +213,9 @@ export function SettingsDialog({
               )}
               {tab === 'network' && <NetworkTab onToast={addToast} />}
               {tab === 'google_sync' && <GoogleSyncTab />}
+              {tab === 'google_contacts' && (
+                <GoogleContactsTab pendingConflictCount={0} isConnected={false} />
+              )}
               {tab === 'about' && <AboutTab onToast={addToast} />}
               {tab === 'onboarding' && <OnboardingTab onResetGuide={onResetGuide} />}
             </div>
