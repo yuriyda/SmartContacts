@@ -1,9 +1,16 @@
 // Schema migrations for the Smart Contacts SQLite database.
 // Idempotent: re-running has no effect once `meta.schema_version >= CURRENT_SCHEMA_VERSION`.
 // Bump CURRENT_SCHEMA_VERSION and add a new versioned block when introducing schema changes.
+//
+// Editing rules:
+// - NEVER remove or alter existing versioned blocks (v1, v2, …). Append-only.
+// - When adding a new version: bump CURRENT_SCHEMA_VERSION, add a new `vN: string[]` block,
+//   and add `if (current < N) for (const stmt of vN) await tx.execute(stmt)` in applyMigrations.
+// - All DDL statements MUST use `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`
+//   so the migration is re-entrant after a crash mid-apply.
 import type { DbAdapter } from './adapter'
 
-export const CURRENT_SCHEMA_VERSION = 1
+export const CURRENT_SCHEMA_VERSION = 2
 
 const v1: string[] = [
   `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
@@ -96,6 +103,72 @@ const v1: string[] = [
   `CREATE INDEX IF NOT EXISTS contact_tasks_did_lts ON contact_tasks(device_id, lamport_ts)`,
 ]
 
+// RO-INVARIANT: INV-3 (snapshot), INV-5 (conflict queue), INV-4 (labels)
+// Schema version 2: Google Contacts read-only sync tables.
+// All tables use CREATE TABLE IF NOT EXISTS for crash-safe re-entrancy.
+const v2: string[] = [
+  // Last successfully pulled Google version of each contact (merge base for 3-way merge).
+  `CREATE TABLE IF NOT EXISTS google_contact_snapshots (
+  google_resource_name  TEXT PRIMARY KEY,
+  etag                  TEXT NOT NULL,
+  update_time           TEXT NOT NULL,
+  payload_json          TEXT NOT NULL,
+  last_synced_at        TEXT NOT NULL
+)`,
+  // Pending and resolved field-level conflicts (INV-5: conflicts never auto-resolve).
+  `CREATE TABLE IF NOT EXISTS sync_conflicts (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  contact_id            TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  google_resource_name  TEXT NOT NULL,
+  field_path            TEXT NOT NULL,
+  base_value_json       TEXT,
+  google_value_json     TEXT,
+  local_value_json      TEXT NOT NULL,
+  status                TEXT NOT NULL CHECK(status IN ('pending','resolved')),
+  resolution            TEXT CHECK(resolution IN ('local','google','custom')),
+  custom_value_json     TEXT,
+  detected_at           TEXT NOT NULL,
+  resolved_at           TEXT
+)`,
+  `CREATE INDEX IF NOT EXISTS sync_conflicts_contact ON sync_conflicts(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS sync_conflicts_status  ON sync_conflicts(status)`,
+  // Google Labels (contactGroups) — read-only namespace per INV-4. Always overwritten on pull.
+  `CREATE TABLE IF NOT EXISTS google_labels (
+  resource_name         TEXT PRIMARY KEY,
+  name                  TEXT NOT NULL,
+  group_type            TEXT NOT NULL CHECK(group_type IN ('system','user')),
+  etag                  TEXT NOT NULL,
+  last_synced_at        TEXT NOT NULL
+)`,
+  // Many-to-many: contacts <-> google labels. Locally read-only per INV-4.
+  `CREATE TABLE IF NOT EXISTS google_label_memberships (
+  contact_id            TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  label_resource_name   TEXT NOT NULL REFERENCES google_labels(resource_name) ON DELETE CASCADE,
+  PRIMARY KEY (contact_id, label_resource_name)
+)`,
+  `CREATE INDEX IF NOT EXISTS google_label_memberships_contact ON google_label_memberships(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS google_label_memberships_label   ON google_label_memberships(label_resource_name)`,
+  // Audit log for Google Contacts pulls (separate from CRDT sync_log per INV-1).
+  `CREATE TABLE IF NOT EXISTS google_contacts_sync_log (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id                TEXT NOT NULL,
+  ts                    TEXT NOT NULL,
+  event                 TEXT NOT NULL,
+  level                 TEXT NOT NULL CHECK(level IN ('info','warn','error')),
+  payload_json          TEXT
+)`,
+  `CREATE INDEX IF NOT EXISTS google_contacts_sync_log_run ON google_contacts_sync_log(run_id)`,
+  `CREATE INDEX IF NOT EXISTS google_contacts_sync_log_ts  ON google_contacts_sync_log(ts)`,
+  // Temporary storage for pending Google photo bytes during a photo conflict resolution.
+  `CREATE TABLE IF NOT EXISTS pending_google_avatars (
+  contact_id            TEXT PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+  blob                  BLOB NOT NULL,
+  mime                  TEXT NOT NULL,
+  hash                  TEXT NOT NULL,
+  fetched_at            TEXT NOT NULL
+)`,
+]
+
 export async function applyMigrations(db: DbAdapter): Promise<void> {
   // On a fresh DB the `meta` table does not exist yet — different adapters react
   // differently: wa-sqlite-backend silently returns [], but @tauri-apps/plugin-sql
@@ -119,6 +192,9 @@ export async function applyMigrations(db: DbAdapter): Promise<void> {
   await db.transaction(async (tx) => {
     if (current < 1) {
       for (const stmt of v1) await tx.execute(stmt)
+    }
+    if (current < 2) {
+      for (const stmt of v2) await tx.execute(stmt)
     }
     const version = String(CURRENT_SCHEMA_VERSION)
     if (current === 0) {
