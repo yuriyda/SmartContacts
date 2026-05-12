@@ -13,6 +13,7 @@
     "dialog:allow-save",
     "fs:allow-write-text-file",
     "fs:allow-read-text-file",
-    "fs:allow-exists"
+    "fs:allow-exists",
+    "core:event:default"
   ]
 }
