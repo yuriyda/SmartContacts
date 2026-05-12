@@ -3,29 +3,26 @@
  * Settings tab: Google Contacts read-only sync (Phase 1).
  *
  * RO-INVARIANT L5.1: no Push/Save/Upload/Send/Submit buttons exist in this tab.
- * This tab is strictly presentational — functional state is injected via props.
+ * RO-INVARIANT INV-2 / INV-6: every Sync now goes through DryRunModal; user
+ * must explicitly Apply before any DB mutation lands.
+ * RO-INVARIANT INV-5: conflicts are queued, never auto-resolved.
  *
  * EDITING RULES:
  *  - Never add write-direction buttons (Push, Save, Upload, Send, Submit).
- *  - All functional UI must be gated behind isTauri — in web-only shell, render
- *    the desktop-only notice instead.
- *  - disconnectFn is the only mutation entrypoint; it must go through the
- *    3-option confirmation flow (Keep / Delete / Cancel), with a second
- *    confirmation for "Delete them all".
+ *  - All functional UI must be gated behind a connected runtime — when
+ *    `runtime` is null (web shell or before init), render the desktop-only
+ *    notice instead.
+ *  - Disconnect goes through the 3-option confirmation flow (Keep / Delete
+ *    / Cancel) with a second confirmation for "Delete them all".
  *  - No `any` types.
  *  - All comments must remain in English.
  */
-import { useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { Contact, GoogleSyncRuntime, Changeset, ConflictRow } from '@smart-contacts/shared'
 import { useApp } from '../AppContext'
-
-// ---------------------------------------------------------------------------
-// Local structural interfaces (avoid deep cross-package path imports)
-// ---------------------------------------------------------------------------
-
-/** Minimal pull-engine interface needed for Phase 1 props typing. */
-export interface PullEngine {
-  run(): Promise<unknown>
-}
+import { DryRunModal } from '../sync/DryRunModal'
+import { PendingConflictsList } from '../sync/PendingConflictsList'
+import { ConflictResolutionModal } from '../sync/ConflictResolutionModal'
 
 // ---------------------------------------------------------------------------
 // Tauri detection — Phase 1 gate
@@ -37,108 +34,214 @@ const isTauri: boolean = typeof window !== 'undefined' && '__TAURI__' in window
 // Types
 // ---------------------------------------------------------------------------
 
-/** Minimal token store interface — Phase 1 only needs the email for display. */
-export interface TokenStore {
-  /** Returns the stored account email, or null if not connected. */
-  getEmail(): Promise<string | null>
-}
-
 export interface GoogleContactsTabProps {
-  pullEngine?: PullEngine
-  tokenStore?: TokenStore
-  disconnectFn?: () => Promise<void>
-  pendingConflictCount: number
-  /** Whether OAuth tokens are present (i.e. user is connected). */
-  isConnected: boolean
-  /** Email of the connected account — null if not yet fetched or not connected. */
-  accountEmail?: string | null
-  /** ISO string of the last successful sync, or null. */
-  lastSyncAt?: string | null
-  /** Number of contacts applied in the last sync cycle. */
-  lastSyncCount?: number
+  /** Wired Google sync runtime from the Tauri host. Null when web shell or before db init. */
+  runtime: GoogleSyncRuntime | null
+  /** Current contacts list — used to look up display names for the conflict list. */
+  contacts: Contact[]
+  /** Notify parent to reload contacts (after Disconnect-Delete or successful Sync). */
+  refreshContacts: () => void
+  /** Toast hook for surface-level notifications. */
+  onToast?: (message: string) => void
 }
 
-// ---------------------------------------------------------------------------
-// Disconnect confirmation state machine
-// ---------------------------------------------------------------------------
+type DisconnectStep = 'idle' | 'choose_action' | 'confirm_delete'
 
-type DisconnectStep =
-  | 'idle'
-  | 'choose_action' // first modal: Keep / Delete / Cancel
-  | 'confirm_delete' // second modal: are-you-sure for Delete
+interface PendingState {
+  changeset: Changeset
+  /** Resolves with whether user clicked Apply (true) or Cancel (false). */
+  decide: (apply: boolean) => void
+}
 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
 export function GoogleContactsTab({
-  disconnectFn,
-  pendingConflictCount,
-  isConnected,
-  accountEmail,
-  lastSyncAt,
-  lastSyncCount,
+  runtime,
+  contacts,
+  refreshContacts,
+  onToast,
 }: GoogleContactsTabProps) {
   const { TC, t } = useApp()
 
-  const [disconnectStep, setDisconnectStep] = useState<DisconnectStep>('idle')
+  // ---- Connection state ----
+  const [isConnected, setIsConnected] = useState(false)
+  const [pendingConflictCount, setPendingConflictCount] = useState(0)
+  const [lastSync, setLastSync] = useState<{ ts: string; appliedCount: number } | null>(null)
+
+  // ---- Action loading flags ----
+  const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [syncNowLoading, setSyncNowLoading] = useState(false)
+  const [disconnectStep, setDisconnectStep] = useState<DisconnectStep>('idle')
 
-  // ---- Shared CSS helpers (mirrors GoogleSyncTab pattern) ----
-  const rowCls = `flex items-center justify-between py-2.5 border-b ${TC.borderClass}`
-  const labelCls = `text-sm ${TC.textMuted}`
-  const valueCls = `text-sm ${TC.textSec}`
+  // ---- Modal state ----
+  const [pending, setPending] = useState<PendingState | null>(null)
+  const [conflictsListOpen, setConflictsListOpen] = useState(false)
+  const [resolveContactId, setResolveContactId] = useState<string | null>(null)
+  const [resolveContactConflicts, setResolveContactConflicts] = useState<ConflictRow[]>([])
+
+  // ---- Contact-name lookup (derived from contacts prop) ----
+  const contactNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of contacts) {
+      const name =
+        c.displayName?.trim() ||
+        [c.givenName, c.familyName].filter(Boolean).join(' ').trim() ||
+        c.id
+      map.set(c.id, name)
+    }
+    return map
+  }, [contacts])
+
+  // ---- Refresh helpers ----
+  const refreshStatus = useCallback(async () => {
+    if (!runtime) return
+    const [connected, pendingCount, info] = await Promise.all([
+      runtime.isConnected(),
+      runtime.getPendingConflictCount(),
+      runtime.getLastSyncInfo(),
+    ])
+    setIsConnected(connected)
+    setPendingConflictCount(pendingCount)
+    setLastSync(info)
+  }, [runtime])
+
+  // ---- Lifecycle: initial load + on runtime change ----
+  useEffect(() => {
+    void refreshStatus()
+  }, [refreshStatus])
 
   // ---- Handlers ----
 
-  const handleSyncNow = async () => {
-    // Phase 1: wired externally via pullEngine prop; here we just set loading state.
+  const handleConnect = useCallback(async () => {
+    if (!runtime) return
+    setConnecting(true)
+    try {
+      await runtime.connect()
+      onToast?.(t('googleContacts.connectedToast') || 'Connected to Google Contacts')
+      await refreshStatus()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      onToast?.((t('googleContacts.connectFailed') || 'Connect failed') + ': ' + msg)
+    } finally {
+      setConnecting(false)
+    }
+  }, [runtime, onToast, t, refreshStatus])
+
+  const handleSyncNow = useCallback(async () => {
+    if (!runtime) return
     setSyncNowLoading(true)
     try {
-      // Actual invocation is responsibility of the parent wiring pullEngine.
-      // Placeholder until parent wires the pull cycle.
-      await Promise.resolve()
+      const result = await runtime.pullEngine.run({
+        confirmFn: (changeset: Changeset) =>
+          new Promise<boolean>((resolve) => {
+            setPending({
+              changeset,
+              decide: (apply) => {
+                setPending(null)
+                resolve(apply)
+              },
+            })
+          }),
+      })
+      // After apply: refresh counters + parent contact list
+      await refreshStatus()
+      refreshContacts()
+      if (result.kind === 'applied') {
+        onToast?.(
+          (t('googleContacts.applied') || 'Sync applied') +
+            `: ${result.appliedCount} change${result.appliedCount === 1 ? '' : 's'}` +
+            (result.conflictCount > 0 ? `, ${result.conflictCount} conflict(s) queued` : ''),
+        )
+      } else if (result.kind === 'cancelled') {
+        onToast?.(t('googleContacts.cancelled') || 'Sync cancelled')
+      } else if (result.kind === 'up_to_date') {
+        onToast?.(t('googleContacts.upToDate') || 'Already up to date')
+      } else if (result.kind === 'failed') {
+        onToast?.((t('googleContacts.syncFailed') || 'Sync failed') + ': ' + result.error.message)
+      }
     } finally {
       setSyncNowLoading(false)
     }
-  }
+  }, [runtime, onToast, t, refreshStatus, refreshContacts])
 
-  const handleDisconnectClick = () => {
-    setDisconnectStep('choose_action')
-  }
+  const handleOpenInGoogle = useCallback(() => {
+    // Phase 1: plain external link via window.open.
+    window.open('https://contacts.google.com/', '_blank')
+  }, [])
 
-  const handleKeepAndDisconnect = async () => {
-    if (!disconnectFn) return
+  const handleDisconnectClick = useCallback(() => setDisconnectStep('choose_action'), [])
+  const handleCancelDisconnect = useCallback(() => setDisconnectStep('idle'), [])
+
+  const handleKeepAndDisconnect = useCallback(async () => {
+    if (!runtime) return
     setDisconnecting(true)
     try {
-      await disconnectFn()
+      await runtime.disconnect({ deleteImported: false })
+      onToast?.(
+        t('googleContacts.disconnectedKeep') || 'Disconnected. Imported contacts kept locally.',
+      )
+      await refreshStatus()
     } finally {
       setDisconnecting(false)
       setDisconnectStep('idle')
     }
-  }
+  }, [runtime, onToast, t, refreshStatus])
 
-  const handleDeleteConfirm = async () => {
-    // "Delete them all" path — still calls same disconnectFn; caller is responsible
-    // for deleting imported contacts before/after token removal.
-    if (!disconnectFn) return
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!runtime) return
     setDisconnecting(true)
     try {
-      await disconnectFn()
+      await runtime.disconnect({ deleteImported: true })
+      onToast?.(
+        t('googleContacts.disconnectedDelete') || 'Disconnected. Imported contacts deleted.',
+      )
+      await refreshStatus()
+      refreshContacts()
     } finally {
       setDisconnecting(false)
       setDisconnectStep('idle')
     }
-  }
+  }, [runtime, onToast, t, refreshStatus, refreshContacts])
 
-  const handleCancelDisconnect = () => {
-    setDisconnectStep('idle')
-  }
+  const handleReviewConflicts = useCallback(() => {
+    setConflictsListOpen(true)
+  }, [])
+
+  const handleResolveContact = useCallback(
+    async (contactId: string) => {
+      if (!runtime) return
+      const rows = await runtime.repos.conflict.listPending({ contactId })
+      setResolveContactConflicts(rows)
+      setResolveContactId(contactId)
+    },
+    [runtime],
+  )
+
+  const handleResolveOne = useCallback(
+    async (
+      id: number,
+      resolution: 'local' | 'google' | 'custom',
+      customValueJson?: string,
+    ): Promise<void> => {
+      if (!runtime) return
+      await runtime.repos.conflict.resolve(id, resolution, customValueJson ?? null)
+      // Refresh the modal's open conflicts list and counters.
+      if (resolveContactId !== null) {
+        const rows = await runtime.repos.conflict.listPending({ contactId: resolveContactId })
+        setResolveContactConflicts(rows)
+        if (rows.length === 0) setResolveContactId(null)
+      }
+      await refreshStatus()
+    },
+    [runtime, resolveContactId, refreshStatus],
+  )
 
   // ---- Format helpers ----
 
-  const formatSyncAt = (iso: string | null | undefined): string => {
+  const formatSyncAt = (iso: string | null): string => {
     if (!iso) return t('sync.never') || 'Never'
     try {
       return new Date(iso).toLocaleString()
@@ -147,11 +250,16 @@ export function GoogleContactsTab({
     }
   }
 
+  // ---- Shared CSS ----
+  const rowCls = `flex items-center justify-between py-2.5 border-b ${TC.borderClass}`
+  const labelCls = `text-sm ${TC.textMuted}`
+  const valueCls = `text-sm ${TC.textSec}`
+
   // ---------------------------------------------------------------------------
-  // Non-Tauri shell: render desktop-only notice
+  // Non-Tauri shell OR runtime not yet ready: render desktop-only notice
   // ---------------------------------------------------------------------------
 
-  if (!isTauri) {
+  if (!isTauri || !runtime) {
     return (
       <div className="space-y-3">
         <div
@@ -160,8 +268,6 @@ export function GoogleContactsTab({
           {t('googleContacts.desktopOnly') ||
             'Google Contacts sync is available in the desktop (Tauri) build only.'}
         </div>
-
-        {/* Phase 1 roadmap notice */}
         <p className={`text-xs ${TC.textMuted}`}>
           {t('googleContacts.phaseOneNotice') ||
             'Two-way sync (push to Google) is coming in a future version. This release only reads from Google.'}
@@ -192,25 +298,15 @@ export function GoogleContactsTab({
         </div>
       </div>
 
-      {/* --- Account row (if connected) --- */}
-      {isConnected && (
-        <div className={rowCls}>
-          <span className={labelCls}>{t('googleContacts.account') || 'Account'}</span>
-          <span className={valueCls}>
-            {accountEmail ?? (t('googleContacts.accountUnknown') || '—')}
-          </span>
-        </div>
-      )}
-
       {/* --- Last sync row (if connected) --- */}
       {isConnected && (
         <div className={rowCls}>
           <span className={labelCls}>{t('sync.last') || 'Last sync'}</span>
           <span className={valueCls}>
-            {formatSyncAt(lastSyncAt)}
-            {lastSyncCount !== undefined && lastSyncCount > 0 && (
+            {formatSyncAt(lastSync?.ts ?? null)}
+            {lastSync && lastSync.appliedCount > 0 && (
               <span className={`ml-2 text-xs ${TC.textMuted}`}>
-                ({lastSyncCount} {t('googleContacts.contacts') || 'contacts'})
+                ({lastSync.appliedCount} {t('googleContacts.contacts') || 'contacts'})
               </span>
             )}
           </span>
@@ -228,9 +324,7 @@ export function GoogleContactsTab({
             <button
               type="button"
               className="text-xs text-sky-400 hover:underline"
-              onClick={() => {
-                /* Review navigation — wired by parent */
-              }}
+              onClick={handleReviewConflicts}
             >
               {t('googleContacts.review') || 'Review'} →
             </button>
@@ -250,11 +344,10 @@ export function GoogleContactsTab({
       <div className="flex items-center justify-end gap-2 pt-2.5">
         {isConnected ? (
           <>
-            {/* Sync now */}
             <button
               type="button"
               disabled={syncNowLoading}
-              onClick={handleSyncNow}
+              onClick={() => void handleSyncNow()}
               className={`px-3 py-1.5 rounded text-sm border ${TC.borderClass} ${TC.textSec} hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed`}
             >
               {syncNowLoading
@@ -262,18 +355,14 @@ export function GoogleContactsTab({
                 : t('sync.now') || 'Sync now'}
             </button>
 
-            {/* Open in Google — plain text; user copies/opens manually */}
             <button
               type="button"
               className={`px-3 py-1.5 rounded text-sm border ${TC.borderClass} ${TC.textSec} hover:opacity-80`}
-              onClick={() => {
-                /* External open handled by parent/Tauri shell */
-              }}
+              onClick={handleOpenInGoogle}
             >
               {t('googleContacts.openInGoogle') || 'Open in Google'}
             </button>
 
-            {/* Disconnect */}
             <button
               type="button"
               disabled={disconnecting}
@@ -284,40 +373,34 @@ export function GoogleContactsTab({
             </button>
           </>
         ) : (
-          /* Connect Google */
           <button
             type="button"
-            className="px-3 py-1.5 rounded text-sm bg-sky-600 text-white hover:bg-sky-500"
-            onClick={() => {
-              /* OAuth flow invoked by parent */
-            }}
+            disabled={connecting}
+            className="px-3 py-1.5 rounded text-sm bg-sky-600 text-white hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => void handleConnect()}
           >
-            {t('googleContacts.connect') || 'Connect Google'}
+            {connecting
+              ? t('googleContacts.connecting') || 'Connecting…'
+              : t('googleContacts.connect') || 'Connect Google'}
           </button>
         )}
       </div>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Disconnect confirmation — step 1: choose action                     */}
-      {/* ------------------------------------------------------------------ */}
+      {/* Disconnect confirmation — step 1 */}
       {disconnectStep === 'choose_action' && (
         <div className={`mt-4 rounded-lg border ${TC.borderClass} ${TC.surface} p-4 space-y-3`}>
           <p className={`text-sm font-medium ${TC.text}`}>
             {t('googleContacts.disconnectTitle') || 'What to do with imported contacts?'}
           </p>
-
           <div className="flex flex-col gap-2">
-            {/* Keep them as local */}
             <button
               type="button"
               disabled={disconnecting}
-              onClick={handleKeepAndDisconnect}
+              onClick={() => void handleKeepAndDisconnect()}
               className={`w-full text-left px-3 py-2 rounded text-sm border ${TC.borderClass} ${TC.textSec} hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed`}
             >
               {t('googleContacts.keepLocal') || 'Keep them as local'}
             </button>
-
-            {/* Delete them all */}
             <button
               type="button"
               onClick={() => setDisconnectStep('confirm_delete')}
@@ -325,8 +408,6 @@ export function GoogleContactsTab({
             >
               {t('googleContacts.deleteAll') || 'Delete them all'}
             </button>
-
-            {/* Cancel */}
             <button
               type="button"
               onClick={handleCancelDisconnect}
@@ -335,8 +416,6 @@ export function GoogleContactsTab({
               {t('common.cancel') || 'Cancel'}
             </button>
           </div>
-
-          {/* Revoke link instruction (plain text — no href) */}
           <p className={`text-xs ${TC.textMuted}`}>
             {t('googleContacts.revokeHint') ||
               'To revoke at Google: myaccount.google.com → Security → Third-party access'}
@@ -344,16 +423,13 @@ export function GoogleContactsTab({
         </div>
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Disconnect confirmation — step 2: confirm delete                    */}
-      {/* ------------------------------------------------------------------ */}
+      {/* Disconnect confirmation — step 2 */}
       {disconnectStep === 'confirm_delete' && (
         <div className={`mt-4 rounded-lg border border-red-500/40 ${TC.surface} p-4 space-y-3`}>
           <p className={`text-sm font-medium text-red-400`}>
             {t('googleContacts.confirmDeleteTitle') ||
               'Are you sure? This will permanently delete all imported contacts.'}
           </p>
-
           <div className="flex items-center gap-2 justify-end">
             <button
               type="button"
@@ -365,7 +441,7 @@ export function GoogleContactsTab({
             <button
               type="button"
               disabled={disconnecting}
-              onClick={handleDeleteConfirm}
+              onClick={() => void handleDeleteConfirm()}
               className="px-3 py-1.5 rounded text-sm bg-red-600 text-white hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {disconnecting
@@ -374,6 +450,58 @@ export function GoogleContactsTab({
             </button>
           </div>
         </div>
+      )}
+
+      {/* --- DryRunModal (rendered when pull-engine asks for confirmation) --- */}
+      <DryRunModal
+        open={pending !== null}
+        changeset={pending?.changeset ?? null}
+        onApply={() => pending?.decide(true)}
+        onCancel={() => pending?.decide(false)}
+      />
+
+      {/* --- PendingConflictsList opened inline (full-screen overlay) --- */}
+      {conflictsListOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-6"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setConflictsListOpen(false)
+          }}
+        >
+          <div
+            className={`${TC.surface} ${TC.text} w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-lg border ${TC.borderClass} p-4 shadow-2xl`}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h2 className={`text-base font-semibold ${TC.text}`}>
+                {t('googleContacts.conflictsTitle') || 'Pending sync conflicts'}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setConflictsListOpen(false)}
+                className={`text-xs ${TC.textMuted} hover:underline`}
+              >
+                {t('common.close') || 'Close'}
+              </button>
+            </div>
+            <PendingConflictsList
+              conflictRepo={runtime.repos.conflict}
+              contactNameById={contactNameById}
+              onResolveContact={(id) => void handleResolveContact(id)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* --- ConflictResolutionModal --- */}
+      {resolveContactId !== null && (
+        <ConflictResolutionModal
+          open={true}
+          contactId={resolveContactId}
+          contactName={contactNameById.get(resolveContactId) ?? resolveContactId}
+          conflicts={resolveContactConflicts}
+          onResolveOne={handleResolveOne}
+          onClose={() => setResolveContactId(null)}
+        />
       )}
     </div>
   )

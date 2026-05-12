@@ -31,7 +31,7 @@ import {
   type ContactSort,
   type ContactSortField,
 } from '@smart-contacts/shared'
-import { exportBackup } from '@smart-contacts/shared'
+import { exportBackup, type GoogleSyncRuntime } from '@smart-contacts/shared'
 import { AppProvider, useApp } from './ui/AppContext'
 import { useDb } from './store/useDb'
 import type { DbState } from './store/dbState'
@@ -80,7 +80,14 @@ import { useUndoableActions } from './store/useUndoableActions'
  * Tree-shaking: this component does NOT import useDb, keeping wa-sqlite out of
  * bundles that only import SmartContactsShell (e.g. the Tauri frontend).
  */
-export function SmartContactsShell({ dbState }: { dbState: DbState }) {
+export function SmartContactsShell({
+  dbState,
+  googleSync,
+}: {
+  dbState: DbState
+  /** Optional Google Contacts sync runtime — provided by Tauri shell; web shell passes null. */
+  googleSync?: GoogleSyncRuntime | null
+}) {
   return (
     <AppProvider
       db={dbState.db}
@@ -88,7 +95,7 @@ export function SmartContactsShell({ dbState }: { dbState: DbState }) {
       contactsRepo={dbState.contactsRepo}
       defsRepo={dbState.defsRepo}
     >
-      <ScreenBody dbState={dbState} />
+      <ScreenBody dbState={dbState} googleSync={googleSync ?? null} />
     </AppProvider>
   )
 }
@@ -99,10 +106,17 @@ export function SmartContactsShell({ dbState }: { dbState: DbState }) {
  */
 export function SmartContactsApp() {
   const dbState = useDb()
-  return <SmartContactsShell dbState={dbState} />
+  // Web shell: no Google Contacts sync (Tauri-only in Phase 1).
+  return <SmartContactsShell dbState={dbState} googleSync={null} />
 }
 
-function ScreenBody({ dbState }: { dbState: DbState }) {
+function ScreenBody({
+  dbState,
+  googleSync,
+}: {
+  dbState: DbState
+  googleSync: GoogleSyncRuntime | null
+}) {
   const {
     TC,
     t,
@@ -1400,6 +1414,7 @@ function ScreenBody({ dbState }: { dbState: DbState }) {
         refreshContacts={refresh}
         onResetGuide={replayGuide}
         onResetLayout={handleResetLayout}
+        googleSync={googleSync}
       />
 
       <GuideOverlay open={guideOpen} onDismiss={dismissGuide} />

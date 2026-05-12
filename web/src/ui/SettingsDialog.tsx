@@ -12,7 +12,7 @@
  *  - No `any` types.
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { Contact, CustomFieldDef } from '@smart-contacts/shared'
+import type { Contact, CustomFieldDef, GoogleSyncRuntime } from '@smart-contacts/shared'
 import { useApp } from './AppContext'
 import { ToastContainer } from './common'
 import { X, Settings } from './icons'
@@ -54,6 +54,8 @@ export interface SettingsDialogProps {
   onResetGuide: () => Promise<void>
   /** Called when the user clicks "Reset panel widths" in General tab. */
   onResetLayout?: () => void
+  /** Optional Google Contacts sync runtime — Tauri-only in Phase 1; null on web. */
+  googleSync?: GoogleSyncRuntime | null
 }
 
 interface ToastEntry {
@@ -92,6 +94,7 @@ export function SettingsDialog({
   refreshContacts,
   onResetGuide,
   onResetLayout,
+  googleSync,
 }: SettingsDialogProps) {
   const { TC, t } = useApp()
   const [tab, setTab] = useState<TabKey>(initialTab)
@@ -214,7 +217,12 @@ export function SettingsDialog({
               {tab === 'network' && <NetworkTab onToast={addToast} />}
               {tab === 'google_sync' && <GoogleSyncTab />}
               {tab === 'google_contacts' && (
-                <GoogleContactsTab pendingConflictCount={0} isConnected={false} />
+                <GoogleContactsTab
+                  runtime={googleSync ?? null}
+                  contacts={contacts}
+                  refreshContacts={refreshContacts}
+                  onToast={addToast}
+                />
               )}
               {tab === 'about' && <AboutTab onToast={addToast} />}
               {tab === 'onboarding' && <OnboardingTab onResetGuide={onResetGuide} />}

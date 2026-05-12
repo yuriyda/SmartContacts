@@ -19,6 +19,7 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { SmartContactsShell } from '@smart-contacts/web'
 import { useTauriDb } from './store/useTauriDb'
+import { useTauriGoogleSync } from './store/useTauriGoogleSync'
 import { pickSaveLocation, writeTextToFile, pickAndReadJsonFile } from './native-bridge'
 import './app.css'
 
@@ -38,7 +39,8 @@ window.__SMART_CONTACTS_NATIVE__ = { pickSaveLocation, writeTextToFile, pickAndR
 
 function TauriApp() {
   const dbState = useTauriDb()
-  return <SmartContactsShell dbState={dbState} />
+  const googleSync = useTauriGoogleSync(dbState.db)
+  return <SmartContactsShell dbState={dbState} googleSync={googleSync} />
 }
 
 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
