@@ -21,7 +21,11 @@ export interface GoogleLabelsSectionProps {
 export function GoogleLabelsSection({ contactId, labelRepo }: GoogleLabelsSectionProps) {
   const { TC } = useApp()
   const [labels, setLabels] = useState<GoogleLabelRow[]>([])
+  const [refreshTick, setRefreshTick] = useState(0)
 
+  // Refetch on mount, contactId change, and whenever the sync engine signals a
+  // change (pull applied, conflict resolved, or disconnect). The signal is a
+  // window event dispatched by GoogleContactsTab — see review #7.
   useEffect(() => {
     let cancelled = false
     void labelRepo.listForContact(contactId).then((rows) => {
@@ -30,7 +34,13 @@ export function GoogleLabelsSection({ contactId, labelRepo }: GoogleLabelsSectio
     return () => {
       cancelled = true
     }
-  }, [contactId, labelRepo])
+  }, [contactId, labelRepo, refreshTick])
+
+  useEffect(() => {
+    const onSyncChanged = () => setRefreshTick((n) => n + 1)
+    window.addEventListener('google-contacts-sync-changed', onSyncChanged)
+    return () => window.removeEventListener('google-contacts-sync-changed', onSyncChanged)
+  }, [])
 
   // Section is invisible when no memberships exist
   if (labels.length === 0) return null

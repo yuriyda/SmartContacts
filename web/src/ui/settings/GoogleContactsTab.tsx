@@ -187,9 +187,10 @@ export function GoogleContactsTab({
             })
           }),
       })
-      // After apply: refresh counters + parent contact list
+      // After apply: refresh counters + parent contact list + notify open contact-detail panels
       await refreshStatus()
       refreshContacts()
+      window.dispatchEvent(new Event('google-contacts-sync-changed'))
       if (result.kind === 'applied') {
         onToast?.(
           (t('googleContacts.applied') || 'Sync applied') +
@@ -225,11 +226,15 @@ export function GoogleContactsTab({
         t('googleContacts.disconnectedKeep') || 'Disconnected. Imported contacts kept locally.',
       )
       await refreshStatus()
+      // Refresh parent contact list so G-badges + Labels sections re-evaluate.
+      refreshContacts()
+      // Notify any open ContactDetail / GoogleLabelsSection to refetch label memberships.
+      window.dispatchEvent(new Event('google-contacts-sync-changed'))
     } finally {
       setDisconnecting(false)
       setDisconnectStep('idle')
     }
-  }, [runtime, onToast, t, refreshStatus])
+  }, [runtime, onToast, t, refreshStatus, refreshContacts])
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!runtime) return
@@ -272,6 +277,8 @@ export function GoogleContactsTab({
       await runtime.resolveConflict(id, resolution, customValueJson ?? null)
       // Refresh contacts in case resolution mutated the contacts row.
       refreshContacts()
+      // Notify any open ContactDetail / GoogleLabelsSection to refetch.
+      window.dispatchEvent(new Event('google-contacts-sync-changed'))
       // Refresh the modal's open conflicts list and counters.
       if (resolveContactId !== null) {
         const rows = await runtime.repos.conflict.listPending({ contactId: resolveContactId })
