@@ -2,6 +2,9 @@
 // Orchestrates: PKCE code generation → Tauri TCP loopback listener → browser consent →
 // authorization code exchange → scope verification → token return.
 //
+// client_id is injected via deps.clientId (read from meta table by factory.ts at call-time).
+// This avoids binding client_id at construction time so UI changes take effect immediately.
+//
 // EDITING RULES:
 // - Do NOT import @tauri-apps/* directly — invoke and openUrl are injected deps (platform-agnostic).
 // - Do NOT add client_secret to token exchange — PKCE only (no secret flow).
@@ -11,7 +14,7 @@
 
 // RO-INVARIANT: L1.1, L1.2
 
-import { OAUTH_SCOPE, OAUTH_AUTH_URL, OAUTH_TOKEN_URL, GOOGLE_OAUTH_CLIENT_ID } from './config'
+import { OAUTH_SCOPE, OAUTH_AUTH_URL, OAUTH_TOKEN_URL } from './config'
 import { verifyGrantedScope } from './scope-verifier'
 
 // ---------------------------------------------------------------------------
@@ -53,6 +56,8 @@ export interface TauriLoopbackDeps {
   invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>
   /** Opens a URL in the system browser. */
   openUrl: (url: string) => Promise<void>
+  /** Google OAuth client_id — read from meta table at call-time, injected here. */
+  clientId: string
   /** Optional custom fetch implementation (defaults to globalThis.fetch). */
   fetchImpl?: typeof fetch
 }
@@ -116,7 +121,7 @@ export async function runTauriLoopbackOauthFlow(
   // Step e: Build authorization URL
   const redirectUri = `http://127.0.0.1:${port}`
   const authParams = new URLSearchParams({
-    client_id: GOOGLE_OAUTH_CLIENT_ID,
+    client_id: deps.clientId,
     redirect_uri: redirectUri,
     scope: OAUTH_SCOPE,
     access_type: 'offline',
@@ -137,7 +142,7 @@ export async function runTauriLoopbackOauthFlow(
   // Step h: Exchange authorization code for tokens (NO client_secret — PKCE only)
   const tokenBody = new URLSearchParams({
     code,
-    client_id: GOOGLE_OAUTH_CLIENT_ID,
+    client_id: deps.clientId,
     redirect_uri: redirectUri,
     grant_type: 'authorization_code',
     code_verifier: codeVerifier,
@@ -174,6 +179,8 @@ export async function runTauriLoopbackOauthFlow(
 /** Dependencies for refreshAccessToken. */
 export interface RefreshDeps {
   refreshToken: string
+  /** Google OAuth client_id — read from meta table at call-time, injected here. */
+  clientId: string
   fetchImpl?: typeof fetch
 }
 
@@ -188,7 +195,7 @@ export async function refreshAccessToken(deps: RefreshDeps): Promise<RefreshToke
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     refresh_token: deps.refreshToken,
-    client_id: GOOGLE_OAUTH_CLIENT_ID,
+    client_id: deps.clientId,
   })
 
   const response = await fetchFn(OAUTH_TOKEN_URL, {

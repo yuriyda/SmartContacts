@@ -328,3 +328,69 @@ describe('repos', () => {
     await db.close()
   })
 })
+
+// ---------------------------------------------------------------------------
+// clientIdStore
+// ---------------------------------------------------------------------------
+
+describe('clientIdStore', () => {
+  it('is exposed on the runtime', async () => {
+    const db = await freshDb('factory-test-clientid-1')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+    expect(runtime.clientIdStore).toBeDefined()
+    await db.close()
+  })
+
+  it('get() returns null before any set()', async () => {
+    const db = await freshDb('factory-test-clientid-2')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+    expect(await runtime.clientIdStore.get()).toBeNull()
+    await db.close()
+  })
+
+  it('set() persists value readable via get()', async () => {
+    const db = await freshDb('factory-test-clientid-3')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+    await runtime.clientIdStore.set('my-client-id.apps.googleusercontent.com')
+    expect(await runtime.clientIdStore.get()).toBe('my-client-id.apps.googleusercontent.com')
+    await db.close()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// connect() — NO_CLIENT_ID guard
+// ---------------------------------------------------------------------------
+
+describe('connect() NO_CLIENT_ID guard', () => {
+  it('throws NO_CLIENT_ID when client_id not set', async () => {
+    const db = await freshDb('factory-test-connect-noclientid-1')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+    // No clientId set in meta table
+    await expect(runtime.connect()).rejects.toThrow('NO_CLIENT_ID')
+    await db.close()
+  })
+})

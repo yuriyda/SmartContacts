@@ -15,6 +15,7 @@ import { rowToContact } from '../../db/contactRow'
 
 import { runTauriLoopbackOauthFlow, refreshAccessToken } from './oauth/tauri-loopback'
 import type { TokenStore } from './oauth/token-store-tauri'
+import { makeClientIdStore, type ClientIdStore } from './oauth/client-id-store'
 import { isConsentFresh } from './oauth/consent-policy'
 
 import { GoogleContactsClient } from './read/client'
@@ -69,6 +70,8 @@ export interface GoogleSyncRuntime {
     label: LabelRepo
     syncLog: SyncLogRepo
   }
+  /** UI Setup section reads/writes client_id via this store (persisted in meta table). */
+  clientIdStore: ClientIdStore
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +80,9 @@ export interface GoogleSyncRuntime {
 
 export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSyncRuntime {
   const { db } = opts
+
+  // --- Step 0: client_id store (persisted in meta table; read at OAuth-time, never cached) ---
+  const clientIdStore = makeClientIdStore(db)
 
   // --- Step 1: Construct repos ---
   const snapshotRepo = new SnapshotRepo(db)
@@ -126,8 +132,16 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
       throw new Error('NOT_CONNECTED')
     }
 
+    const clientId = await clientIdStore.get()
+    if (clientId === null) {
+      throw new Error(
+        'NO_CLIENT_ID: Set your Google OAuth Client ID in Settings → Google Contacts → Setup.',
+      )
+    }
+
     const result = await refreshAccessToken({
       refreshToken,
+      clientId,
       ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
     })
     tokenCache.accessToken = result.accessToken
@@ -222,9 +236,16 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
   // --- Public methods ---
 
   async function connect(): Promise<void> {
+    const clientId = await clientIdStore.get()
+    if (clientId === null) {
+      throw new Error(
+        'NO_CLIENT_ID: Set your Google OAuth Client ID in Settings → Google Contacts → Setup.',
+      )
+    }
     const result = await runTauriLoopbackOauthFlow({
       invoke: opts.oauthInvoke,
       openUrl: opts.oauthOpenUrl,
+      clientId,
       ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
     })
     await opts.tokenStore.write(result.refreshToken)
@@ -309,5 +330,6 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
       label: labelRepo,
       syncLog: syncLogRepo,
     },
+    clientIdStore,
   }
 }

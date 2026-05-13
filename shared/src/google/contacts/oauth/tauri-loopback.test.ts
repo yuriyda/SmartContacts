@@ -60,13 +60,20 @@ function makeInvokeMock(port = 8888, code = 'auth-code-123') {
 // ---------------------------------------------------------------------------
 // runTauriLoopbackOauthFlow
 
+const TEST_CLIENT_ID = 'test-client-id.apps.googleusercontent.com'
+
 describe('runTauriLoopbackOauthFlow', () => {
   it('happy path: returns accessToken, refreshToken, expiresIn, grantedAt', async () => {
     const invoke = makeInvokeMock()
     const openUrl = vi.fn().mockResolvedValue(undefined)
     const fetchImpl = makeFetchMock(makeTokenResponse())
 
-    const result = await runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl })
+    const result = await runTauriLoopbackOauthFlow({
+      invoke,
+      openUrl,
+      fetchImpl,
+      clientId: TEST_CLIENT_ID,
+    })
 
     expect(result.accessToken).toBe('access-token-abc')
     expect(result.refreshToken).toBe('refresh-token-xyz')
@@ -81,7 +88,7 @@ describe('runTauriLoopbackOauthFlow', () => {
     const openUrl = vi.fn().mockResolvedValue(undefined)
     const fetchImpl = makeFetchMock(makeTokenResponse())
 
-    await runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl })
+    await runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID })
 
     expect(invoke).toHaveBeenCalledWith('oauth_start', expect.any(Object))
     expect(invoke).toHaveBeenCalledWith('oauth_await_code', expect.any(Object))
@@ -92,7 +99,7 @@ describe('runTauriLoopbackOauthFlow', () => {
     const openUrl = vi.fn().mockResolvedValue(undefined)
     const fetchImpl = makeFetchMock(makeTokenResponse())
 
-    await runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl })
+    await runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID })
 
     expect(openUrl).toHaveBeenCalledTimes(1)
     const url: string = openUrl.mock.calls[0][0] as string
@@ -111,9 +118,9 @@ describe('runTauriLoopbackOauthFlow', () => {
       }),
     )
 
-    await expect(runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl })).rejects.toThrow(
-      ScopeViolationError,
-    )
+    await expect(
+      runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID }),
+    ).rejects.toThrow(ScopeViolationError)
   })
 
   it('throws ScopeViolationError when scope is completely different', async () => {
@@ -123,9 +130,9 @@ describe('runTauriLoopbackOauthFlow', () => {
       makeTokenResponse({ scope: 'https://www.googleapis.com/auth/userinfo.email' }),
     )
 
-    await expect(runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl })).rejects.toThrow(
-      ScopeViolationError,
-    )
+    await expect(
+      runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID }),
+    ).rejects.toThrow(ScopeViolationError)
   })
 
   it('propagates invoke rejection (simulates Rust state-mismatch error)', async () => {
@@ -137,9 +144,9 @@ describe('runTauriLoopbackOauthFlow', () => {
     const openUrl = vi.fn().mockResolvedValue(undefined)
     const fetchImpl = makeFetchMock(makeTokenResponse())
 
-    await expect(runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl })).rejects.toThrow(
-      'state_mismatch',
-    )
+    await expect(
+      runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID }),
+    ).rejects.toThrow('state_mismatch')
   })
 })
 
@@ -152,6 +159,7 @@ describe('refreshAccessToken', () => {
 
     const result = await refreshAccessToken({
       refreshToken: 'old-refresh-token',
+      clientId: TEST_CLIENT_ID,
       fetchImpl,
     })
 
@@ -165,6 +173,7 @@ describe('refreshAccessToken', () => {
 
     const result = await refreshAccessToken({
       refreshToken: 'old-refresh-token',
+      clientId: TEST_CLIENT_ID,
       fetchImpl,
     })
 
@@ -176,16 +185,16 @@ describe('refreshAccessToken', () => {
       makeTokenResponse({ scope: 'https://www.googleapis.com/auth/contacts' }),
     )
 
-    await expect(refreshAccessToken({ refreshToken: 'rt', fetchImpl })).rejects.toThrow(
-      ScopeViolationError,
-    )
+    await expect(
+      refreshAccessToken({ refreshToken: 'rt', clientId: TEST_CLIENT_ID, fetchImpl }),
+    ).rejects.toThrow(ScopeViolationError)
   })
 
   it('throws when token endpoint returns non-ok status', async () => {
     const fetchImpl = makeFetchMock({ error: 'invalid_grant' }, 400)
 
-    await expect(refreshAccessToken({ refreshToken: 'expired-rt', fetchImpl })).rejects.toThrow(
-      'Token refresh failed (400)',
-    )
+    await expect(
+      refreshAccessToken({ refreshToken: 'expired-rt', clientId: TEST_CLIENT_ID, fetchImpl }),
+    ).rejects.toThrow('Token refresh failed (400)')
   })
 })

@@ -7,6 +7,10 @@
  * must explicitly Apply before any DB mutation lands.
  * RO-INVARIANT INV-5: conflicts are queued, never auto-resolved.
  *
+ * Setup section: user pastes their Google OAuth Client ID into an input field.
+ * It is persisted in the meta table via runtime.clientIdStore (no .env, no rebuild).
+ * The Setup section is visible only when NOT connected.
+ *
  * EDITING RULES:
  *  - Never add write-direction buttons (Push, Save, Upload, Send, Submit).
  *  - All functional UI must be gated behind a connected runtime — when
@@ -70,6 +74,11 @@ export function GoogleContactsTab({
   const [pendingConflictCount, setPendingConflictCount] = useState(0)
   const [lastSync, setLastSync] = useState<{ ts: string; appliedCount: number } | null>(null)
 
+  // ---- Setup section state (client_id input) ----
+  const [clientIdInput, setClientIdInput] = useState('')
+  const [savingClientId, setSavingClientId] = useState(false)
+  const [hasClientId, setHasClientId] = useState(false)
+
   // ---- Action loading flags ----
   const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
@@ -108,12 +117,37 @@ export function GoogleContactsTab({
     setLastSync(info)
   }, [runtime])
 
+  // ---- Load client_id on mount / runtime change ----
+  useEffect(() => {
+    if (!runtime) return
+    void runtime.clientIdStore.get().then((val) => {
+      if (val !== null) {
+        setClientIdInput(val)
+        setHasClientId(true)
+      }
+    })
+  }, [runtime])
+
   // ---- Lifecycle: initial load + on runtime change ----
   useEffect(() => {
     void refreshStatus()
   }, [refreshStatus])
 
   // ---- Handlers ----
+
+  const handleSaveClientId = useCallback(async () => {
+    if (!runtime) return
+    const value = clientIdInput.trim()
+    if (!value) return
+    setSavingClientId(true)
+    try {
+      await runtime.clientIdStore.set(value)
+      setHasClientId(true)
+      onToast?.('Client ID saved')
+    } finally {
+      setSavingClientId(false)
+    }
+  }, [runtime, clientIdInput, onToast])
 
   const handleConnect = useCallback(async () => {
     if (!runtime) return
@@ -124,7 +158,11 @@ export function GoogleContactsTab({
       await refreshStatus()
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      onToast?.((t('googleContacts.connectFailed') || 'Connect failed') + ': ' + msg)
+      if (msg.startsWith('NO_CLIENT_ID')) {
+        onToast?.('Set Client ID first')
+      } else {
+        onToast?.((t('googleContacts.connectFailed') || 'Connect failed') + ': ' + msg)
+      }
     } finally {
       setConnecting(false)
     }
@@ -282,6 +320,34 @@ export function GoogleContactsTab({
 
   return (
     <div className="space-y-1">
+      {/* --- Setup section (visible only when NOT connected) --- */}
+      {!isConnected && (
+        <div className={`mb-4 p-3 rounded border ${TC.borderClass} ${TC.elevated}`}>
+          <div className={`text-sm font-medium ${TC.text} mb-2`}>Setup</div>
+          <label className={`block text-xs ${TC.textMuted} mb-1`}>Google OAuth Client ID</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={clientIdInput}
+              onChange={(e) => setClientIdInput(e.target.value)}
+              placeholder="xxx-yyy.apps.googleusercontent.com"
+              className={`flex-1 px-2 py-1 text-sm rounded border ${TC.borderClass} bg-transparent ${TC.text}`}
+            />
+            <button
+              type="button"
+              disabled={savingClientId || clientIdInput.trim() === ''}
+              onClick={() => void handleSaveClientId()}
+              className="px-3 py-1.5 rounded text-sm bg-sky-600 text-white hover:bg-sky-500 disabled:opacity-50"
+            >
+              {savingClientId ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          <p className={`text-xs ${TC.textMuted} mt-2`}>
+            Get one from console.cloud.google.com → OAuth client ID → Desktop App type.
+          </p>
+        </div>
+      )}
+
       {/* --- Status row --- */}
       <div className={rowCls}>
         <span className={labelCls}>{t('googleContacts.status') || 'Status'}</span>
@@ -375,7 +441,7 @@ export function GoogleContactsTab({
         ) : (
           <button
             type="button"
-            disabled={connecting}
+            disabled={!hasClientId || connecting}
             className="px-3 py-1.5 rounded text-sm bg-sky-600 text-white hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={() => void handleConnect()}
           >
