@@ -67,13 +67,15 @@ interface ToastEntry {
 // Tab list definition
 // ---------------------------------------------------------------------------
 
+// NOTE: 'google_sync' tab (Drive backup, P5 stub) is intentionally hidden
+// until P5 lands. The component still exists at ./settings/GoogleSyncTab and
+// the render case below still handles it for direct-link compatibility.
 const TABS: { key: TabKey; labelKey: string }[] = [
   { key: 'general', labelKey: 'settings.tabs.general' },
   { key: 'custom_fields', labelKey: 'settings.tabs.custom_fields' },
   { key: 'backup', labelKey: 'settings.tabs.backup' },
   { key: 'privacy', labelKey: 'settings.tabs.privacy' },
   { key: 'network', labelKey: 'settings.tabs.network' },
-  { key: 'google_sync', labelKey: 'settings.tabs.google_sync' },
   { key: 'google_contacts', labelKey: 'settings.tabs.google_contacts' },
   { key: 'about', labelKey: 'settings.tabs.about' },
   { key: 'onboarding', labelKey: 'settings.tabs.onboarding' },

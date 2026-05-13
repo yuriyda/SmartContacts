@@ -32,7 +32,10 @@ import { ConflictResolutionModal } from '../sync/ConflictResolutionModal'
 // Tauri detection — Phase 1 gate
 // ---------------------------------------------------------------------------
 
-const isTauri: boolean = typeof window !== 'undefined' && '__TAURI__' in window
+// Tauri v2 exposes `__TAURI_INTERNALS__`; older v1 used `__TAURI__`.
+// Accept either to be robust across Tauri version upgrades.
+const isTauri: boolean =
+  typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
 
 // ---------------------------------------------------------------------------
 // Types
