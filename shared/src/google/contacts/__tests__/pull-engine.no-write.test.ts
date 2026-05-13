@@ -152,6 +152,8 @@ function makeContactsReadRepo(db: DbAdapter): GoogleContactsReadRepo {
           emails: [],
           addresses: [],
           events: [],
+          birthdays: [],
+          relations: [],
           organizations: [],
           urls: [],
           imClients: [],

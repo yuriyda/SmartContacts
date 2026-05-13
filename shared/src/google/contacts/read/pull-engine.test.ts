@@ -141,6 +141,8 @@ function makeContactsReadRepo(db: DbAdapter): GoogleContactsReadRepo {
           addresses:
             r.addresses != null ? (JSON.parse(r.addresses) as NormalizedContact['addresses']) : [],
           events: r.events != null ? (JSON.parse(r.events) as NormalizedContact['events']) : [],
+          birthdays: [],
+          relations: [],
           organizations:
             r.organizations != null
               ? (JSON.parse(r.organizations) as NormalizedContact['organizations'])

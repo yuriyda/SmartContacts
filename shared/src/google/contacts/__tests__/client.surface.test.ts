@@ -11,7 +11,7 @@ import { GoogleContactsClient } from '../read/client'
 
 // Known private/internal helpers that are not part of the public API.
 // TS access modifiers are erased at runtime, so these appear in getOwnPropertyNames.
-const KNOWN_PRIVATE_HELPERS = new Set(['buildFetchOpts'])
+const KNOWN_PRIVATE_HELPERS = new Set(['buildFetchOpts', 'fetchWithRetry'])
 
 describe('GoogleContactsClient surface (RO-INVARIANT L6.2)', () => {
   const FORBIDDEN_METHOD_PATTERN =

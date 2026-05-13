@@ -7,6 +7,11 @@
 // - Do NOT add write methods (create, update, delete, batchUpdate, etc.).
 // - Do NOT bypass googleApiFetch — all requests must go through it.
 // - All comments must remain in English.
+// - URL construction MUST use the URL + URLSearchParams APIs (never string concat).
+// - Retry policy: 401 → one retry (fresh token); 429/5xx → exponential backoff.
+//
+// Not mapped: Google's miscKeywords are Outlook-import artifacts with no natural
+// slot in Contact; dropped from PERSON_FIELDS to avoid silent data discard.
 
 // RO-INVARIANT: L3.1 (read methods only)
 
@@ -18,11 +23,14 @@ import type {
   ListContactGroupsResponse,
 } from './types'
 
-/** Fields requested for every Person fetch — covers all read-phase fields. */
+/** Fields requested for every Person fetch — covers all mapped read-phase fields. */
 const PERSON_FIELDS =
   'names,nicknames,emailAddresses,phoneNumbers,addresses,organizations,' +
   'occupations,biographies,birthdays,events,relations,urls,imClients,' +
-  'miscKeywords,memberships,photos,locales,userDefined,genders'
+  'memberships,photos,locales,userDefined,genders'
+
+/** Delays (ms) for exponential backoff on 429/5xx: 4 retries max. */
+const BACKOFF_DELAYS_MS = [1000, 2000, 4000, 8000]
 
 /** Options for listConnections. */
 export interface ListConnectionsOpts {
@@ -40,12 +48,14 @@ export interface ListContactGroupsOpts {
 
 /** Constructor dependencies for GoogleContactsClient. */
 export interface GoogleContactsClientDeps {
-  /** Async supplier of a valid OAuth2 access token. */
-  tokenSource: () => Promise<string>
+  /** Async supplier of a valid OAuth2 access token. Pass forceRefresh=true to bypass cache. */
+  tokenSource: (forceRefresh?: boolean) => Promise<string>
   /** Optional audit callback forwarded to googleApiFetch (L2.3). */
   audit?: HttpAuditFn
   /** Injectable fetch implementation for testing. Defaults to globalThis.fetch. */
   fetchImpl?: typeof fetch
+  /** Injectable sleep function for testing (defaults to setTimeout-based sleep). */
+  sleepFn?: (ms: number) => Promise<void>
 }
 
 /**
@@ -53,16 +63,23 @@ export interface GoogleContactsClientDeps {
  *
  * All four public methods are GET-only and pass through googleApiFetch,
  * which enforces the method whitelist (L2.1) and URL allowlist (L2.2).
+ *
+ * Retry policy (§9.1):
+ *  - HTTP 401: one retry with forceRefresh=true on tokenSource; throw on second 401.
+ *  - HTTP 429 or 5xx: exponential backoff [1s, 2s, 4s, 8s]; throw after 4 retries.
+ *  - Other non-ok: throw immediately.
  */
 export class GoogleContactsClient {
-  private readonly tokenSource: () => Promise<string>
+  private readonly tokenSource: (forceRefresh?: boolean) => Promise<string>
   private readonly audit: HttpAuditFn | undefined
   private readonly fetchImpl: typeof fetch | undefined
+  private readonly sleepFn: (ms: number) => Promise<void>
 
   constructor(deps: GoogleContactsClientDeps) {
     this.tokenSource = deps.tokenSource
     this.audit = deps.audit
     this.fetchImpl = deps.fetchImpl
+    this.sleepFn = deps.sleepFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
   }
 
   /** Builds the GoogleApiFetchOptions with optional fields excluded when undefined (exactOptionalPropertyTypes). */
@@ -78,34 +95,59 @@ export class GoogleContactsClient {
   }
 
   /**
+   * Internal fetch with retry logic.
+   *  - 401: refresh token once, retry; throw on second 401.
+   *  - 429 / 5xx: exponential backoff up to 4 retries; throw after exhausted.
+   *  - Other non-ok: throw immediately.
+   */
+  private async fetchWithRetry(buildUrl: () => string): Promise<Response> {
+    // --- 401 retry: try once with fresh token ---
+    let accessToken = await this.tokenSource()
+    let response = await googleApiFetch(this.buildFetchOpts(buildUrl(), accessToken))
+
+    if (response.status === 401) {
+      // Refresh token and retry once
+      accessToken = await this.tokenSource(true)
+      response = await googleApiFetch(this.buildFetchOpts(buildUrl(), accessToken))
+      if (response.status === 401) {
+        throw new Error(`People API request failed: HTTP 401 Unauthorized (after token refresh)`)
+      }
+    }
+
+    // --- 429 / 5xx backoff ---
+    let attempt = 0
+    while (
+      (response.status === 429 || response.status >= 500) &&
+      attempt < BACKOFF_DELAYS_MS.length
+    ) {
+      await this.sleepFn(BACKOFF_DELAYS_MS[attempt]!)
+      attempt++
+      response = await googleApiFetch(this.buildFetchOpts(buildUrl(), accessToken))
+    }
+
+    if (!response.ok) {
+      throw new Error(`People API request failed: HTTP ${response.status} ${response.statusText}`)
+    }
+
+    return response
+  }
+
+  /**
    * Lists connections (contacts) for the authenticated user.
    * Supports pagination via pageToken and incremental sync via syncToken.
    */
   async listConnections(opts: ListConnectionsOpts = {}): Promise<ListConnectionsResponse> {
-    let url =
-      `https://people.googleapis.com/v1/people/me/connections` +
-      `?personFields=${PERSON_FIELDS}` +
-      `&pageSize=${opts.pageSize ?? 100}`
-
-    if (opts.pageToken !== undefined) {
-      url += `&pageToken=${opts.pageToken}`
-    }
-    if (opts.syncToken !== undefined) {
-      url += `&syncToken=${opts.syncToken}`
-    }
-    if (opts.requestSyncToken === true) {
-      url += `&requestSyncToken=true`
+    const buildUrl = (): string => {
+      const url = new URL('https://people.googleapis.com/v1/people/me/connections')
+      url.searchParams.set('personFields', PERSON_FIELDS)
+      url.searchParams.set('pageSize', String(opts.pageSize ?? 100))
+      if (opts.pageToken !== undefined) url.searchParams.set('pageToken', opts.pageToken)
+      if (opts.syncToken !== undefined) url.searchParams.set('syncToken', opts.syncToken)
+      if (opts.requestSyncToken === true) url.searchParams.set('requestSyncToken', 'true')
+      return url.toString()
     }
 
-    const accessToken = await this.tokenSource()
-    const response = await googleApiFetch(this.buildFetchOpts(url, accessToken))
-
-    if (!response.ok) {
-      throw new Error(
-        `People API listConnections failed: HTTP ${response.status} ${response.statusText}`,
-      )
-    }
-
+    const response = await this.fetchWithRetry(buildUrl)
     return (await response.json()) as ListConnectionsResponse
   }
 
@@ -113,16 +155,13 @@ export class GoogleContactsClient {
    * Fetches a single Person by resource name (e.g. "people/c12345678").
    */
   async getPerson(resourceName: string): Promise<Person> {
-    const url =
-      `https://people.googleapis.com/v1/${resourceName}` + `?personFields=${PERSON_FIELDS}`
-
-    const accessToken = await this.tokenSource()
-    const response = await googleApiFetch(this.buildFetchOpts(url, accessToken))
-
-    if (!response.ok) {
-      throw new Error(`People API getPerson failed: HTTP ${response.status} ${response.statusText}`)
+    const buildUrl = (): string => {
+      const url = new URL(`https://people.googleapis.com/v1/${resourceName}`)
+      url.searchParams.set('personFields', PERSON_FIELDS)
+      return url.toString()
     }
 
+    const response = await this.fetchWithRetry(buildUrl)
     return (await response.json()) as Person
   }
 
@@ -130,21 +169,14 @@ export class GoogleContactsClient {
    * Lists contact groups for the authenticated user.
    */
   async listContactGroups(opts: ListContactGroupsOpts = {}): Promise<ListContactGroupsResponse> {
-    let url = `https://people.googleapis.com/v1/contactGroups` + `?pageSize=${opts.pageSize ?? 100}`
-
-    if (opts.pageToken !== undefined) {
-      url += `&pageToken=${opts.pageToken}`
+    const buildUrl = (): string => {
+      const url = new URL('https://people.googleapis.com/v1/contactGroups')
+      url.searchParams.set('pageSize', String(opts.pageSize ?? 100))
+      if (opts.pageToken !== undefined) url.searchParams.set('pageToken', opts.pageToken)
+      return url.toString()
     }
 
-    const accessToken = await this.tokenSource()
-    const response = await googleApiFetch(this.buildFetchOpts(url, accessToken))
-
-    if (!response.ok) {
-      throw new Error(
-        `People API listContactGroups failed: HTTP ${response.status} ${response.statusText}`,
-      )
-    }
-
+    const response = await this.fetchWithRetry(buildUrl)
     return (await response.json()) as ListContactGroupsResponse
   }
 
@@ -152,17 +184,9 @@ export class GoogleContactsClient {
    * Fetches a single ContactGroup by resource name (e.g. "contactGroups/family").
    */
   async getContactGroup(resourceName: string): Promise<ContactGroup> {
-    const url = `https://people.googleapis.com/v1/${resourceName}`
+    const buildUrl = (): string => `https://people.googleapis.com/v1/${resourceName}`
 
-    const accessToken = await this.tokenSource()
-    const response = await googleApiFetch(this.buildFetchOpts(url, accessToken))
-
-    if (!response.ok) {
-      throw new Error(
-        `People API getContactGroup failed: HTTP ${response.status} ${response.statusText}`,
-      )
-    }
-
+    const response = await this.fetchWithRetry(buildUrl)
     return (await response.json()) as ContactGroup
   }
 }

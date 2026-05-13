@@ -24,6 +24,8 @@ function makeContact(overrides: Partial<NormalizedContact> = {}): NormalizedCont
     emails: [],
     addresses: [],
     events: [],
+    birthdays: [],
+    relations: [],
     organizations: [],
     urls: [],
     imClients: [],

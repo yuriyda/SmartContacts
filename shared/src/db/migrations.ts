@@ -10,7 +10,7 @@
 //   so the migration is re-entrant after a crash mid-apply.
 import type { DbAdapter } from './adapter'
 
-export const CURRENT_SCHEMA_VERSION = 2
+export const CURRENT_SCHEMA_VERSION = 3
 
 const v1: string[] = [
   `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
@@ -169,6 +169,24 @@ const v2: string[] = [
 )`,
 ]
 
+// Schema version 3: Google Contacts birthdays and relations columns.
+// Adds two TEXT (JSON) columns to contacts for Google-sourced birthday and relation data.
+// These are separate from 'events' to avoid overloading local calendar events.
+// NOTE: SQLite does not support ALTER TABLE ... ADD COLUMN IF NOT EXISTS.
+// We check PRAGMA table_info(contacts) and skip ALTER TABLE if the column already exists.
+// This ensures idempotency even when the migration is re-run on a DB where meta was dropped.
+async function applyV3(tx: DbAdapter): Promise<void> {
+  type TableInfoRow = { name: string }
+  const cols = await tx.select<TableInfoRow>('PRAGMA table_info(contacts)')
+  const existing = new Set(cols.map((c) => c.name))
+  if (!existing.has('google_birthdays')) {
+    await tx.execute('ALTER TABLE contacts ADD COLUMN google_birthdays TEXT')
+  }
+  if (!existing.has('google_relations')) {
+    await tx.execute('ALTER TABLE contacts ADD COLUMN google_relations TEXT')
+  }
+}
+
 export async function applyMigrations(db: DbAdapter): Promise<void> {
   // On a fresh DB the `meta` table does not exist yet — different adapters react
   // differently: wa-sqlite-backend silently returns [], but @tauri-apps/plugin-sql
@@ -195,6 +213,9 @@ export async function applyMigrations(db: DbAdapter): Promise<void> {
     }
     if (current < 2) {
       for (const stmt of v2) await tx.execute(stmt)
+    }
+    if (current < 3) {
+      await applyV3(tx)
     }
     const version = String(CURRENT_SCHEMA_VERSION)
     if (current === 0) {

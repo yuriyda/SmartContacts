@@ -67,6 +67,8 @@ function makeNormalized(over: Partial<NormalizedContact> = {}): NormalizedContac
     emails: [],
     addresses: [],
     events: [],
+    birthdays: [],
+    relations: [],
     organizations: [],
     urls: [],
     imClients: [],

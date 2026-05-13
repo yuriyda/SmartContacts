@@ -17,6 +17,8 @@ import type {
   NormalizedEmail,
   NormalizedAddress,
   NormalizedEvent,
+  NormalizedBirthday,
+  NormalizedRelation,
   NormalizedOrganization,
   NormalizedUrl,
   NormalizedImClient,
@@ -121,6 +123,25 @@ export function personToNormalized(p: Person): NormalizedContact {
       date: personDateToString(e.date!),
     }))
 
+  // --- birthdays (kept separate from events for clarity; People API has a dedicated array) ---
+  const birthdays: NormalizedBirthday[] = (p.birthdays ?? [])
+    .filter(
+      (b) => b.date != null && (b.date.year != null || b.date.month != null || b.date.day != null),
+    )
+    .map((b) => ({
+      year: b.date!.year,
+      month: b.date!.month,
+      day: b.date!.day,
+    }))
+
+  // --- relations ---
+  const relations: NormalizedRelation[] = (p.relations ?? [])
+    .filter((r) => r.person != null && r.person !== '')
+    .map((r) => ({
+      person: r.person as string,
+      type: r.type,
+    }))
+
   // --- urls ---
   const urls: NormalizedUrl[] = (p.urls ?? []).map((u) => ({
     value: (u.value ?? '').toLowerCase(),
@@ -181,6 +202,8 @@ export function personToNormalized(p: Person): NormalizedContact {
     emails,
     addresses,
     events,
+    birthdays,
+    relations,
     organizations,
     urls,
     imClients,
@@ -267,6 +290,15 @@ export function contactRowToNormalized(c: Contact): NormalizedContact {
     handle: im.handle,
   }))
 
+  // birthdays and relations are stored as separate DB columns (v3 migration);
+  // Contact row does not carry them natively — read from googleBirthdays/googleRelations if available.
+  // These are stored as JSON on the contact row via migration v3 columns decoded via rowToContact extensions.
+  // For now, contactRowToNormalized returns empty arrays (these fields are Google-sourced, not local-edited).
+  const birthdays: NormalizedBirthday[] =
+    (c as unknown as { googleBirthdays?: NormalizedBirthday[] }).googleBirthdays ?? []
+  const relations: NormalizedRelation[] =
+    (c as unknown as { googleRelations?: NormalizedRelation[] }).googleRelations ?? []
+
   return {
     googleResourceName: c.googleResourceName ?? '',
     etag: c.googleEtag ?? '',
@@ -285,6 +317,8 @@ export function contactRowToNormalized(c: Contact): NormalizedContact {
     emails,
     addresses,
     events,
+    birthdays,
+    relations,
     organizations,
     urls,
     imClients,

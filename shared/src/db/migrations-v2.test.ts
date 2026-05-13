@@ -2,7 +2,7 @@
 // Verifies: fresh DB applies all v2 tables; re-run is idempotent; upgrade from v1 works.
 // Uses the same mock-adapter pattern as migrations.test.ts (no real DB needed).
 import { describe, expect, test, beforeEach } from 'vitest'
-import { applyMigrations } from './migrations'
+import { applyMigrations, CURRENT_SCHEMA_VERSION } from './migrations'
 import type { DbAdapter } from './adapter'
 
 // Expected v2 table names from spec §4.2.
@@ -67,23 +67,23 @@ describe('migrations v2', () => {
     }
   })
 
-  test('fresh DB: schema_version is set to 2 after migration', async () => {
+  test('fresh DB: schema_version is set to CURRENT_SCHEMA_VERSION after migration', async () => {
     await applyMigrations(db)
     const versionRow = await db.select<{ value: string }>(
       "SELECT value FROM meta WHERE key='schema_version'",
     )
-    expect(versionRow[0]?.value).toBe('2')
+    expect(versionRow[0]?.value).toBe(String(CURRENT_SCHEMA_VERSION))
   })
 
   test('idempotent: re-running applyMigrations does not re-execute DDL', async () => {
     await applyMigrations(db)
     const firstCount = db.executed.length
     await applyMigrations(db)
-    // Second call should be a no-op: version is already 2 >= CURRENT_SCHEMA_VERSION.
+    // Second call should be a no-op: version is already >= CURRENT_SCHEMA_VERSION.
     expect(db.executed.length).toBe(firstCount)
   })
 
-  test('upgrade from v1: starts with schema_version=1, v2 tables are created and version becomes 2', async () => {
+  test('upgrade from v1: starts with schema_version=1, v2 tables are created and version becomes CURRENT', async () => {
     // Simulate a DB that was already at v1: meta row exists with value '1'.
     const dbV1 = mockAdapter(1)
 
@@ -97,11 +97,11 @@ describe('migrations v2', () => {
       )
     }
 
-    // Version must be updated to 2.
+    // Version must be updated to CURRENT_SCHEMA_VERSION.
     const versionRow = await dbV1.select<{ value: string }>(
       "SELECT value FROM meta WHERE key='schema_version'",
     )
-    expect(versionRow[0]?.value).toBe('2')
+    expect(versionRow[0]?.value).toBe(String(CURRENT_SCHEMA_VERSION))
   })
 
   test('upgrade from v1: v1 tables are NOT re-created (only version update + v2 DDL)', async () => {

@@ -47,6 +47,8 @@ describe('fixture A: minimal person (displayName only)', () => {
     expect(nc.emails).toEqual([])
     expect(nc.addresses).toEqual([])
     expect(nc.events).toEqual([])
+    expect(nc.birthdays).toEqual([])
+    expect(nc.relations).toEqual([])
     expect(nc.organizations).toEqual([])
     expect(nc.urls).toEqual([])
     expect(nc.imClients).toEqual([])
@@ -587,6 +589,8 @@ describe('contactRowToNormalized: Contact with no Google fields', () => {
     expect(nc.emails).toEqual([])
     expect(nc.addresses).toEqual([])
     expect(nc.events).toEqual([])
+    expect(nc.birthdays).toEqual([])
+    expect(nc.relations).toEqual([])
     expect(nc.organizations).toEqual([])
     expect(nc.urls).toEqual([])
     expect(nc.imClients).toEqual([])
@@ -595,5 +599,88 @@ describe('contactRowToNormalized: Contact with no Google fields', () => {
 
   it('userDefined defaults to empty object', () => {
     expect(contactRowToNormalized(localOnly).userDefined).toEqual({})
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Fixture: birthdays mapping
+// ---------------------------------------------------------------------------
+describe('personToNormalized: birthdays mapping', () => {
+  it('maps birthday with year, month, day', () => {
+    const person: Person = {
+      resourceName: 'people/cbday',
+      etag: 'e',
+      birthdays: [{ date: { year: 1990, month: 6, day: 15 } }],
+    }
+    const nc = personToNormalized(person)
+    expect(nc.birthdays).toHaveLength(1)
+    expect(nc.birthdays[0]).toEqual({ year: 1990, month: 6, day: 15 })
+  })
+
+  it('maps birthday with only month+day (no year)', () => {
+    const person: Person = {
+      resourceName: 'people/cbday2',
+      etag: 'e',
+      birthdays: [{ date: { month: 3, day: 20 } }],
+    }
+    const nc = personToNormalized(person)
+    expect(nc.birthdays).toHaveLength(1)
+    expect(nc.birthdays[0]).toEqual({ month: 3, day: 20 })
+  })
+
+  it('skips birthday entries with no date parts', () => {
+    const person: Person = {
+      resourceName: 'people/cbday3',
+      etag: 'e',
+      birthdays: [{ text: 'some day' }],
+    }
+    const nc = personToNormalized(person)
+    expect(nc.birthdays).toEqual([])
+  })
+
+  it('skips birthday with empty date object', () => {
+    const person: Person = {
+      resourceName: 'people/cbday4',
+      etag: 'e',
+      birthdays: [{ date: {} }],
+    }
+    const nc = personToNormalized(person)
+    expect(nc.birthdays).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Fixture: relations mapping
+// ---------------------------------------------------------------------------
+describe('personToNormalized: relations mapping', () => {
+  it('maps relation with person and type', () => {
+    const person: Person = {
+      resourceName: 'people/crel',
+      etag: 'e',
+      relations: [{ person: 'John Doe', type: 'mother' }],
+    }
+    const nc = personToNormalized(person)
+    expect(nc.relations).toHaveLength(1)
+    expect(nc.relations[0]).toEqual({ person: 'John Doe', type: 'mother' })
+  })
+
+  it('maps relation without type', () => {
+    const person: Person = {
+      resourceName: 'people/crel2',
+      etag: 'e',
+      relations: [{ person: 'Jane Smith' }],
+    }
+    const nc = personToNormalized(person)
+    expect(nc.relations[0]).toEqual({ person: 'Jane Smith', type: undefined })
+  })
+
+  it('skips relations with empty or absent person field', () => {
+    const person: Person = {
+      resourceName: 'people/crel3',
+      etag: 'e',
+      relations: [{ person: '', type: 'friend' }, { type: 'colleague' }],
+    }
+    const nc = personToNormalized(person)
+    expect(nc.relations).toEqual([])
   })
 })

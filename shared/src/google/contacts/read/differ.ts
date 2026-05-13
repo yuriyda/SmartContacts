@@ -16,6 +16,8 @@ import type {
   NormalizedEmail,
   NormalizedAddress,
   NormalizedEvent,
+  NormalizedBirthday,
+  NormalizedRelation,
   NormalizedOrganization,
   NormalizedUrl,
   NormalizedImClient,
@@ -170,6 +172,14 @@ function urlKey(u: NormalizedUrl): string {
 
 function imKey(im: NormalizedImClient): string {
   return `${im.protocol}|${im.handle}`
+}
+
+function birthdayKey(b: NormalizedBirthday): string {
+  return `${b.year ?? ''}-${String(b.month ?? '').padStart(2, '0')}-${String(b.day ?? '').padStart(2, '0')}`
+}
+
+function relationKey(r: NormalizedRelation): string {
+  return `${r.person}|${r.type ?? ''}`
 }
 
 // ---------------------------------------------------------------------------
@@ -619,6 +629,32 @@ function mergeOne(
   )
   cleanUpdates.push(...imResult.updates)
   conflicts.push(...imResult.conflicts)
+
+  const birthdayResult = mergeArray(
+    'birthdays',
+    oursContact.birthdays,
+    baseContact?.birthdays ?? [],
+    theirsContact.birthdays,
+    birthdayKey,
+    contactId,
+    rn,
+    now,
+  )
+  cleanUpdates.push(...birthdayResult.updates)
+  conflicts.push(...birthdayResult.conflicts)
+
+  const relationResult = mergeArray(
+    'relations',
+    oursContact.relations,
+    baseContact?.relations ?? [],
+    theirsContact.relations,
+    relationKey,
+    contactId,
+    rn,
+    now,
+  )
+  cleanUpdates.push(...relationResult.updates)
+  conflicts.push(...relationResult.conflicts)
 
   // --- Photo (spec §6.4) ---
   const photoResult = mergePhoto(oursContact, baseContact, theirsContact, contactId, now)

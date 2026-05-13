@@ -3,6 +3,9 @@
 // This file is types-only — no runtime logic.
 // All Google People API shapes are minimal read-only projections.
 // Do not add write-side types here; see Phase 2 spec when written.
+//
+// Not mapped: Google's miscKeywords are Outlook-import artifacts with no natural
+// slot in Contact; dropped from PERSON_FIELDS as well to avoid silent data discard.
 
 // ---------------------------------------------------------------------------
 // People API v1 — field metadata
@@ -164,6 +167,19 @@ export interface Photo {
   default?: boolean
 }
 
+export interface Birthday {
+  metadata?: FieldMetadata
+  date?: PersonDate
+  text?: string
+}
+
+export interface Relation {
+  metadata?: FieldMetadata
+  person?: string
+  type?: string
+  formattedType?: string
+}
+
 export interface PersonMetadata {
   sources?: Array<{
     type?: string
@@ -190,6 +206,8 @@ export interface Person {
   addresses?: Address[]
   organizations?: Organization[]
   events?: Event[]
+  birthdays?: Birthday[]
+  relations?: Relation[]
   urls?: Url[]
   imClients?: ImClient[]
   biographies?: Biography[]
@@ -253,6 +271,19 @@ export interface NormalizedImClient {
   handle: string
 }
 
+/** Partial date from a Google birthday — all parts are optional (year-less, day-less, etc). */
+export interface NormalizedBirthday {
+  year?: number | undefined
+  month?: number | undefined
+  day?: number | undefined
+}
+
+/** A named relation (e.g. "mother", "manager") from Google. */
+export interface NormalizedRelation {
+  person: string
+  type?: string | undefined
+}
+
 export interface NormalizedContact {
   googleResourceName: string
   etag: string
@@ -272,6 +303,8 @@ export interface NormalizedContact {
   emails: NormalizedEmail[]
   addresses: NormalizedAddress[]
   events: NormalizedEvent[]
+  birthdays: NormalizedBirthday[]
+  relations: NormalizedRelation[]
   organizations: NormalizedOrganization[]
   urls: NormalizedUrl[]
   imClients: NormalizedImClient[]

@@ -1,5 +1,6 @@
 // Tests for GoogleContactsClient — verifies all four read methods, auth header,
-// audit callback, and error handling on non-ok responses.
+// audit callback, error handling on non-ok responses, URL encoding via URLSearchParams,
+// and retry logic (401 token refresh; 429/5xx exponential backoff).
 //
 // EDITING RULES:
 // - Tests must remain read-only; do NOT add tests for write operations.
@@ -23,17 +24,36 @@ function makeFetchMock(body: unknown, status = 200) {
   } satisfies Partial<Response> as unknown as Response)
 }
 
+/** Builds a fetch mock that returns different responses on successive calls. */
+function makeSequentialFetchMock(responses: Array<{ status: number; body?: unknown }>) {
+  let call = 0
+  return vi.fn().mockImplementation(() => {
+    const r = responses[call] ?? responses[responses.length - 1]!
+    call++
+    return Promise.resolve({
+      ok: r.status >= 200 && r.status < 300,
+      status: r.status,
+      statusText: r.status === 200 ? 'OK' : 'Error',
+      json: vi.fn().mockResolvedValue(r.body ?? {}),
+    } as unknown as Response)
+  })
+}
+
 const ACCESS_TOKEN = 'test-access-token-abc'
+const REFRESHED_TOKEN = 'test-refreshed-token-xyz'
 
 function makeTokenSource() {
   return vi.fn().mockResolvedValue(ACCESS_TOKEN)
 }
 
-// The fixed personFields string the client must use.
+/** No-op sleep for tests (avoids real delays). */
+const noopSleep = vi.fn().mockResolvedValue(undefined)
+
+// The fixed personFields string the client must use (miscKeywords removed).
 const PERSON_FIELDS =
   'names,nicknames,emailAddresses,phoneNumbers,addresses,organizations,' +
   'occupations,biographies,birthdays,events,relations,urls,imClients,' +
-  'miscKeywords,memberships,photos,locales,userDefined,genders'
+  'memberships,photos,locales,userDefined,genders'
 
 // ---------------------------------------------------------------------------
 // Test suite
@@ -50,6 +70,7 @@ describe('GoogleContactsClient', () => {
     client = new GoogleContactsClient({
       tokenSource,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
     })
   })
 
@@ -59,6 +80,7 @@ describe('GoogleContactsClient', () => {
     client = new GoogleContactsClient({
       tokenSource,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
     })
 
     await client.listConnections()
@@ -67,11 +89,6 @@ describe('GoogleContactsClient', () => {
     const [calledUrl, calledInit] = fetchMock.mock.calls[0] as [string, RequestInit]
 
     expect(calledUrl).toContain('https://people.googleapis.com/v1/people/me/connections')
-    expect(calledUrl).toContain(
-      `personFields=${encodeURIComponent(PERSON_FIELDS).replace(/%2C/gi, ',').replace(/%2C/g, ',')}`.split(
-        '?',
-      )[0] ?? '',
-    )
     expect(calledUrl).toContain('personFields=')
     expect(calledUrl).toContain('pageSize=100')
     expect(calledInit.method).toBe('GET')
@@ -85,12 +102,13 @@ describe('GoogleContactsClient', () => {
     client = new GoogleContactsClient({
       tokenSource,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
     })
 
     await client.listConnections({ pageToken: 'xyz' })
 
     const [calledUrl] = fetchMock.mock.calls[0] as [string]
-    expect(calledUrl).toContain('&pageToken=xyz')
+    expect(calledUrl).toContain('pageToken=xyz')
   })
 
   // Case c: listConnections({ requestSyncToken: true }) includes &requestSyncToken=true
@@ -99,12 +117,13 @@ describe('GoogleContactsClient', () => {
     client = new GoogleContactsClient({
       tokenSource,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
     })
 
     await client.listConnections({ requestSyncToken: true })
 
     const [calledUrl] = fetchMock.mock.calls[0] as [string]
-    expect(calledUrl).toContain('&requestSyncToken=true')
+    expect(calledUrl).toContain('requestSyncToken=true')
   })
 
   // Case d: getPerson('people/c123') GETs .../v1/people/c123?personFields=...
@@ -113,6 +132,7 @@ describe('GoogleContactsClient', () => {
     client = new GoogleContactsClient({
       tokenSource,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
     })
 
     await client.getPerson('people/c123')
@@ -128,6 +148,7 @@ describe('GoogleContactsClient', () => {
     client = new GoogleContactsClient({
       tokenSource,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
     })
 
     await client.listContactGroups()
@@ -143,6 +164,7 @@ describe('GoogleContactsClient', () => {
     client = new GoogleContactsClient({
       tokenSource,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
     })
 
     await client.getContactGroup('contactGroups/family')
@@ -159,6 +181,7 @@ describe('GoogleContactsClient', () => {
     client = new GoogleContactsClient({
       tokenSource: customTokenSource,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
     })
 
     await client.listConnections()
@@ -179,6 +202,7 @@ describe('GoogleContactsClient', () => {
       tokenSource,
       audit,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
     })
 
     await client.listConnections()
@@ -192,13 +216,194 @@ describe('GoogleContactsClient', () => {
   })
 
   // Case i: non-ok response causes method to throw Error with status code
-  it('(i) throws Error with status code when response.ok is false (401)', async () => {
-    fetchMock = makeFetchMock({ error: 'Unauthorized' }, 401)
+  it('(i) throws Error with status code when response.ok is false (404)', async () => {
+    fetchMock = makeFetchMock({ error: 'Not Found' }, 404)
     client = new GoogleContactsClient({
       tokenSource,
       fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
+    })
+
+    await expect(client.listConnections()).rejects.toThrow('404')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Case j: PERSON_FIELDS does NOT include miscKeywords
+  // ---------------------------------------------------------------------------
+  it('(j) PERSON_FIELDS does not include miscKeywords', async () => {
+    fetchMock = makeFetchMock({ connections: [] })
+    client = new GoogleContactsClient({
+      tokenSource,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
+    })
+
+    await client.listConnections()
+
+    const [calledUrl] = fetchMock.mock.calls[0] as [string]
+    expect(calledUrl).not.toContain('miscKeywords')
+  })
+
+  // Case k: PERSON_FIELDS includes birthdays and relations
+  it('(k) PERSON_FIELDS includes birthdays and relations', async () => {
+    fetchMock = makeFetchMock({ connections: [] })
+    client = new GoogleContactsClient({
+      tokenSource,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
+    })
+
+    await client.listConnections()
+
+    const [calledUrl] = fetchMock.mock.calls[0] as [string]
+    // Decode URL to check actual param value
+    const urlObj = new URL(calledUrl)
+    const pf = urlObj.searchParams.get('personFields') ?? ''
+    expect(pf).toContain('birthdays')
+    expect(pf).toContain('relations')
+    expect(pf).toBe(PERSON_FIELDS)
+  })
+
+  // ---------------------------------------------------------------------------
+  // Case l: URLSearchParams encodes special characters in pageToken
+  // ---------------------------------------------------------------------------
+  it('(l) pageToken with special chars (&, =, +, /) is properly URL-encoded', async () => {
+    fetchMock = makeFetchMock({ connections: [] })
+    client = new GoogleContactsClient({
+      tokenSource,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
+    })
+
+    const specialToken = 'abc&def=ghi+jkl/mno'
+    await client.listConnections({ pageToken: specialToken })
+
+    const [calledUrl] = fetchMock.mock.calls[0] as [string]
+    // The raw special chars must NOT appear literally in the URL
+    expect(calledUrl).not.toContain('abc&def=ghi+jkl/mno')
+    // URLSearchParams-encoded value must be present (% encoding)
+    const urlObj = new URL(calledUrl)
+    expect(urlObj.searchParams.get('pageToken')).toBe(specialToken)
+  })
+
+  // Case l2: syncToken with special chars
+  it('(l2) syncToken with special chars is properly URL-encoded', async () => {
+    fetchMock = makeFetchMock({ connections: [] })
+    client = new GoogleContactsClient({
+      tokenSource,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepFn: noopSleep,
+    })
+
+    const specialToken = 'tok=en&val+ue/here'
+    await client.listConnections({ syncToken: specialToken })
+
+    const [calledUrl] = fetchMock.mock.calls[0] as [string]
+    const urlObj = new URL(calledUrl)
+    expect(urlObj.searchParams.get('syncToken')).toBe(specialToken)
+  })
+
+  // ---------------------------------------------------------------------------
+  // Case m: HTTP 401 once → retry with refreshed token → success
+  // ---------------------------------------------------------------------------
+  it('(m) HTTP 401 on first call → retries with forceRefresh=true → succeeds', async () => {
+    const seqFetch = makeSequentialFetchMock([
+      { status: 401 },
+      { status: 200, body: { connections: [] } },
+    ])
+    const tokenSourceSpy = vi
+      .fn()
+      .mockResolvedValueOnce(ACCESS_TOKEN) // initial call
+      .mockResolvedValueOnce(REFRESHED_TOKEN) // forceRefresh call
+
+    client = new GoogleContactsClient({
+      tokenSource: tokenSourceSpy,
+      fetchImpl: seqFetch as unknown as typeof fetch,
+      sleepFn: noopSleep,
+    })
+
+    const result = await client.listConnections()
+    expect(result).toEqual({ connections: [] })
+
+    // tokenSource called twice: once normal, once with forceRefresh=true
+    expect(tokenSourceSpy).toHaveBeenCalledTimes(2)
+    expect(tokenSourceSpy.mock.calls[1]![0]).toBe(true)
+
+    // fetch called twice
+    expect(seqFetch).toHaveBeenCalledTimes(2)
+    // Second call uses refreshed token
+    const [, secondInit] = seqFetch.mock.calls[1] as [string, RequestInit]
+    expect((secondInit.headers as Record<string, string>)['Authorization']).toBe(
+      `Bearer ${REFRESHED_TOKEN}`,
+    )
+  })
+
+  // Case n: HTTP 401 twice → throws
+  it('(n) HTTP 401 on both calls → throws Unauthorized error', async () => {
+    const seqFetch = makeSequentialFetchMock([{ status: 401 }, { status: 401 }])
+    const tokenSourceSpy = vi
+      .fn()
+      .mockResolvedValueOnce(ACCESS_TOKEN)
+      .mockResolvedValueOnce(REFRESHED_TOKEN)
+
+    client = new GoogleContactsClient({
+      tokenSource: tokenSourceSpy,
+      fetchImpl: seqFetch as unknown as typeof fetch,
+      sleepFn: noopSleep,
     })
 
     await expect(client.listConnections()).rejects.toThrow('401')
+    expect(seqFetch).toHaveBeenCalledTimes(2)
+  })
+
+  // Case o: HTTP 429 → backoff → eventual success
+  it('(o) HTTP 429 → waits → retries → succeeds on third call', async () => {
+    const seqFetch = makeSequentialFetchMock([
+      { status: 429 },
+      { status: 429 },
+      { status: 200, body: { connections: ['a'] } },
+    ])
+
+    const sleepSpy = vi.fn().mockResolvedValue(undefined)
+    client = new GoogleContactsClient({
+      tokenSource,
+      fetchImpl: seqFetch as unknown as typeof fetch,
+      sleepFn: sleepSpy,
+    })
+
+    const result = await client.listConnections()
+    expect(result).toEqual({ connections: ['a'] })
+
+    // fetch: initial + 2 retry attempts = 3 total
+    expect(seqFetch).toHaveBeenCalledTimes(3)
+    // sleep called twice (once per 429 before retry)
+    expect(sleepSpy).toHaveBeenCalledTimes(2)
+    // First backoff = 1000ms, second = 2000ms
+    expect(sleepSpy.mock.calls[0]![0]).toBe(1000)
+    expect(sleepSpy.mock.calls[1]![0]).toBe(2000)
+  })
+
+  // Case p: HTTP 500 → max retries → throws
+  it('(p) HTTP 500 → all 4 retries exhausted → throws', async () => {
+    const seqFetch = makeSequentialFetchMock([
+      { status: 500 },
+      { status: 500 },
+      { status: 500 },
+      { status: 500 },
+      { status: 500 },
+    ])
+
+    const sleepSpy = vi.fn().mockResolvedValue(undefined)
+    client = new GoogleContactsClient({
+      tokenSource,
+      fetchImpl: seqFetch as unknown as typeof fetch,
+      sleepFn: sleepSpy,
+    })
+
+    await expect(client.listConnections()).rejects.toThrow('500')
+    // initial call + 4 retries = 5 calls
+    expect(seqFetch).toHaveBeenCalledTimes(5)
+    // 4 backoff sleeps
+    expect(sleepSpy).toHaveBeenCalledTimes(4)
   })
 })
