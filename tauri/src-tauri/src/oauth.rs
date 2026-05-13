@@ -159,15 +159,18 @@ pub async fn oauth_await_code(
 /// and the WebView's IPC context isn't disrupted.
 ///
 /// Platform-specific spawn:
-///   - Windows: `cmd /C start "" <url>`
+///   - Windows: `rundll32 url.dll,FileProtocolHandler <url>` — passes the URL as
+///              a single argv entry; `cmd /C start "" <url>` was buggy because
+///              cmd.exe interprets `&` in the URL as a command separator,
+///              truncating OAuth URLs after the first query parameter.
 ///   - macOS:   `open <url>`
 ///   - Linux:   `xdg-open <url>`
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &url])
+        std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", &url])
             .spawn()
             .map_err(|e| e.to_string())?;
     }
