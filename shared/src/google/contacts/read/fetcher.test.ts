@@ -149,8 +149,10 @@ describe('fetchAll', () => {
     expect(result.nextSyncToken).toBe('final-token')
   })
 
-  // Case (c): requestSyncToken=true ONLY on first page when syncToken is null
-  it('(c) requestSyncToken=true only on page 1 when syncToken is null', async () => {
+  // Case (c): requestSyncToken=true on EVERY page of a full fetch.
+  // Google People API rejects subsequent paginated pages without this flag
+  // (returns 400 INVALID_ARGUMENT) when the original page-1 request set it.
+  it('(c) requestSyncToken=true on every page of a full fetch (syncToken null)', async () => {
     const capturedOpts: Array<Parameters<GoogleContactsClient['listConnections']>[0]> = []
     const pages: ListConnectionsResponse[] = [
       { connections: [makePerson('1')], nextPageToken: 'pt1' },
@@ -174,8 +176,7 @@ describe('fetchAll', () => {
     } as unknown as FetchAllDeps)
 
     expect(capturedOpts[0]?.requestSyncToken).toBe(true)
-    // Second page must NOT have requestSyncToken
-    expect(capturedOpts[1]?.requestSyncToken).toBeUndefined()
+    expect(capturedOpts[1]?.requestSyncToken).toBe(true)
   })
 
   // Case (d): syncToken provided — requestSyncToken NOT set; client receives syncToken

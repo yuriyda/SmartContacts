@@ -92,7 +92,11 @@ async function fetchConnectionPages(
       const opts: Parameters<GoogleContactsClient['listConnections']>[0] = { pageSize }
       if (pageToken !== undefined) opts.pageToken = pageToken
       if (effectiveSyncToken !== undefined) opts.syncToken = effectiveSyncToken
-      if (isFullFetch && pageNumber === 1) opts.requestSyncToken = true
+      // requestSyncToken must be set on EVERY page of a full fetch, not just
+      // the first. Google People API treats subsequent paginated requests
+      // without this flag as INVALID_ARGUMENT — the flag is part of the
+      // pagination "session" identity, not a one-shot opt-in.
+      if (isFullFetch) opts.requestSyncToken = true
       response = await client.listConnections(opts)
     } catch (err) {
       // Re-detect HTTP 410 from error message thrown by client
