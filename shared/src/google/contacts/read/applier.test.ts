@@ -324,7 +324,9 @@ describe('Applier: labels are fully replaced and memberships set', () => {
       ...emptyChangeset('run-labels'),
       labels: {
         full: [labelA, labelB],
-        memberships: new Map([[contactId, ['contactGroups/a']]]),
+        // Memberships in differ's output are keyed by googleResourceName; the
+        // applier resolves to the real local ULID.
+        memberships: new Map([['people/label-contact-1', ['contactGroups/a']]]),
       },
     }
     await applier.apply(changeset)
@@ -348,7 +350,7 @@ describe('Applier: labels are fully replaced and memberships set', () => {
 
   it('second apply with different labels full-replaces (no old rows remain)', async () => {
     const db2 = await freshDb()
-    const contactId2 = await seedContact(db2, 'people/label-contact-2')
+    await seedContact(db2, 'people/label-contact-2')
     const applier2 = makeApplier(db2)
 
     // First apply: labelA only
@@ -356,7 +358,7 @@ describe('Applier: labels are fully replaced and memberships set', () => {
       ...emptyChangeset('run-labels-2a'),
       labels: {
         full: [makeLabel({ resourceName: 'contactGroups/a', name: 'Friends', groupType: 'user' })],
-        memberships: new Map([[contactId2, ['contactGroups/a']]]),
+        memberships: new Map([['people/label-contact-2', ['contactGroups/a']]]),
       },
     })
 
@@ -365,7 +367,7 @@ describe('Applier: labels are fully replaced and memberships set', () => {
       ...emptyChangeset('run-labels-2b'),
       labels: {
         full: [makeLabel({ resourceName: 'contactGroups/b', name: 'Family', groupType: 'user' })],
-        memberships: new Map([[contactId2, ['contactGroups/b']]]),
+        memberships: new Map([['people/label-contact-2', ['contactGroups/b']]]),
       },
     })
 
@@ -387,16 +389,16 @@ describe('Applier: transaction atomicity — error triggers rollback', () => {
 
   beforeAll(async () => {
     db = await freshDb()
-
-    // Inject a conflict with an invalid contact_id that violates the FK constraint
-    // (sync_conflicts.contact_id REFERENCES contacts(id)) to force a mid-tx SQL error.
     await db.execute('PRAGMA foreign_keys = ON')
 
+    // Force a mid-transaction SQL error AFTER cleanInsert + conflict insert by
+    // emitting two labels that share a primary key (resource_name). The second
+    // INSERT into google_labels triggers a UNIQUE constraint failure, rolling
+    // back contact / snapshot / conflict writes that happened earlier in tx.
     const applier = makeApplier(db)
     const normalized = makeNormalized({ googleResourceName: 'people/atomic-1' })
-    const invalidConflict: ConflictRecord = {
-      // This contact_id does NOT exist → FK violation → SQL error mid-transaction
-      contactId: 'non-existent-contact-id-xxxxxxxxxxxxxxx',
+    const conflict: ConflictRecord = {
+      contactId: 'people/atomic-1', // surrogate; applier resolves to ULID
       googleResourceName: 'people/atomic-1',
       fieldPath: 'display_name',
       baseValueJson: null,
@@ -404,12 +406,18 @@ describe('Applier: transaction atomicity — error triggers rollback', () => {
       localValueJson: '"Old"',
       detectedAt: new Date().toISOString(),
     }
+    const labelA = makeLabel({ resourceName: 'contactGroups/dup', name: 'A', groupType: 'user' })
+    const labelB = makeLabel({ resourceName: 'contactGroups/dup', name: 'B', groupType: 'user' })
 
     try {
       await applier.apply({
         ...emptyChangeset('run-atomic'),
         cleanInserts: [normalized],
-        conflicts: [invalidConflict],
+        conflicts: [conflict],
+        labels: {
+          full: [labelA, labelB], // PK collision on second INSERT
+          memberships: new Map(),
+        },
       })
     } catch (err) {
       applyError = err instanceof Error ? err : new Error(String(err))

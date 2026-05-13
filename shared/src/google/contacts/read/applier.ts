@@ -288,6 +288,19 @@ export class Applier {
       await this.deps.db.transaction(async (tx: DbAdapter) => {
         const now = new Date().toISOString()
 
+        // -- Build googleResourceName → contacts.id (ULID) resolver --
+        // The differ stage uses googleResourceName as a surrogate contactId in
+        // FieldUpdate / ConflictRecord / labels.memberships. We resolve to the
+        // real local ULID here, in-transaction, so all downstream writes target
+        // the correct row.
+        const idByResourceName = new Map<string, string>()
+        {
+          const rows = await tx.select<{ id: string; google_resource_name: string }>(
+            'SELECT id, google_resource_name FROM contacts WHERE google_resource_name IS NOT NULL',
+          )
+          for (const r of rows) idByResourceName.set(r.google_resource_name, r.id)
+        }
+
         // -- (a) cleanInserts: insert new contact rows + snapshots --
         for (const normalized of changeset.cleanInserts) {
           // Check for an existing row with the same google_resource_name (idempotency).
@@ -311,28 +324,35 @@ export class Applier {
             lastSyncedAt: now,
           })
 
+          // Make newly-inserted contact's id available for downstream label
+          // memberships that may reference its googleResourceName in the same run.
+          idByResourceName.set(normalized.googleResourceName, id)
+
           appliedCount++
         }
 
         // -- (b) cleanUpdates: update contacts + snapshots --
-        // Group FieldUpdates by contactId so each contact gets one UPDATE statement.
-        const updatesByContactId = new Map<
-          string,
-          { googleResourceName: string; updates: FieldUpdate[] }
-        >()
+        // Group FieldUpdates by googleResourceName (differ's surrogate), then
+        // resolve each to a real contacts.id before writing.
+        const updatesByResourceName = new Map<string, FieldUpdate[]>()
         for (const fu of changeset.cleanUpdates) {
-          const existing = updatesByContactId.get(fu.contactId)
+          const existing = updatesByResourceName.get(fu.googleResourceName)
           if (existing !== undefined) {
-            existing.updates.push(fu)
+            existing.push(fu)
           } else {
-            updatesByContactId.set(fu.contactId, {
-              googleResourceName: fu.googleResourceName,
-              updates: [fu],
-            })
+            updatesByResourceName.set(fu.googleResourceName, [fu])
           }
         }
 
-        for (const [contactId, { googleResourceName, updates }] of updatesByContactId) {
+        for (const [googleResourceName, updates] of updatesByResourceName) {
+          const localId = idByResourceName.get(googleResourceName)
+          if (localId === undefined) {
+            // Differ produced an update for a contact we don't have locally.
+            // Shouldn't happen for clean updates (ours must exist in oursMap for
+            // mergeOne to fire), but be defensive.
+            continue
+          }
+
           // Resolve semantic fieldPaths → SQL columns
           const colUpdates = groupUpdatesByColumn(updates)
 
@@ -341,13 +361,13 @@ export class Applier {
             const params: unknown[] = colUpdates.map((cu) => cu.encodedValue)
             await tx.execute(
               `UPDATE contacts SET ${setClauses}, updated_at = ?, google_last_synced_at = ? WHERE id = ?`,
-              [...params, now, now, contactId],
+              [...params, now, now, localId],
             )
           } else {
             // No recognized column changes — still update timestamps
             await tx.execute(
               `UPDATE contacts SET google_last_synced_at = ?, updated_at = ? WHERE id = ?`,
-              [now, now, contactId],
+              [now, now, localId],
             )
           }
 
@@ -378,18 +398,26 @@ export class Applier {
         }
 
         // -- (d) conflicts: insert pending conflict rows --
+        // Translate surrogate contactId (= googleResourceName) → real local ULID.
+        // For conflicts on contacts that don't exist locally yet (e.g. deletion
+        // conflict where local was already gone), skip — there's no FK to satisfy.
         const conflictRepo = new ConflictRepo(tx)
-        const pendingRows: NewConflict[] = changeset.conflicts.map((c) => ({
-          contactId: c.contactId,
-          googleResourceName: c.googleResourceName,
-          fieldPath: c.fieldPath,
-          baseValueJson: c.baseValueJson,
-          googleValueJson: c.googleValueJson,
-          localValueJson: c.localValueJson,
-          detectedAt: c.detectedAt,
-        }))
+        const pendingRows: NewConflict[] = []
+        for (const c of changeset.conflicts) {
+          const localId = idByResourceName.get(c.googleResourceName)
+          if (localId === undefined) continue
+          pendingRows.push({
+            contactId: localId,
+            googleResourceName: c.googleResourceName,
+            fieldPath: c.fieldPath,
+            baseValueJson: c.baseValueJson,
+            googleValueJson: c.googleValueJson,
+            localValueJson: c.localValueJson,
+            detectedAt: c.detectedAt,
+          })
+        }
         await conflictRepo.insertPending(pendingRows)
-        conflictCount = changeset.conflicts.length
+        conflictCount = pendingRows.length
 
         // -- (e) labels: full-replace google_labels, then per-contact memberships --
         // NOTE: LabelRepo.replaceAll/replaceMembershipsForContact call db.transaction() internally.
@@ -402,13 +430,17 @@ export class Applier {
             [label.resourceName, label.name, label.groupType, label.etag, label.lastSyncedAt],
           )
         }
-        for (const [contactId, labelResourceNames] of changeset.labels.memberships) {
-          await tx.execute('DELETE FROM google_label_memberships WHERE contact_id = ?', [contactId])
+        // Memberships map is keyed by googleResourceName from the differ;
+        // translate to real local ULID before writing.
+        for (const [gResourceName, labelResourceNames] of changeset.labels.memberships) {
+          const localId = idByResourceName.get(gResourceName)
+          if (localId === undefined) continue
+          await tx.execute('DELETE FROM google_label_memberships WHERE contact_id = ?', [localId])
           for (const resourceName of labelResourceNames) {
             await tx.execute(
               `INSERT INTO google_label_memberships (contact_id, label_resource_name)
                VALUES (?, ?)`,
-              [contactId, resourceName],
+              [localId, resourceName],
             )
           }
         }
