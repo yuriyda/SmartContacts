@@ -161,6 +161,12 @@ export function GoogleContactsTab({
       await refreshStatus()
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
+      // Surface the full error to DevTools console so the user can copy it
+      // even after the toast auto-dismisses. Critical for diagnosing 400/403
+      // errors from Google's token endpoint where the response body holds
+      // the real cause (invalid_grant, redirect_uri_mismatch, etc.).
+      // eslint-disable-next-line no-console
+      console.error('[GoogleContacts] Connect failed:', e)
       if (msg.startsWith('NO_CLIENT_ID')) {
         onToast?.('Set Client ID first')
       } else {

@@ -66,8 +66,8 @@ export function StatusBar({
         </button>
       )}
 
-      {/* Centre — sync placeholder */}
-      <div className={`flex-1 text-center ${TC.textMuted}`}>{t('status.sync_pending')}</div>
+      {/* Centre — reserved for future status info */}
+      <div className="flex-1" />
 
       {/* Right — toggles */}
       <div className="flex items-center gap-1 flex-1 justify-end">
