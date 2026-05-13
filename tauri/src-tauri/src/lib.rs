@@ -18,7 +18,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             oauth::oauth_start,
-            oauth::oauth_await_code
+            oauth::oauth_await_code,
+            oauth::open_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

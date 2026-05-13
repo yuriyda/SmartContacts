@@ -61,17 +61,26 @@ describe('migrations', () => {
     expect(ddl).toContain('google_relations')
   })
 
-  test('is idempotent: second call does not re-run DDL', async () => {
+  test('is functionally idempotent: schema_version unchanged after second call', async () => {
+    // Self-healing migrations re-run all CREATE IF NOT EXISTS DDL every boot.
+    // Idempotency is at the SQL semantic level (no rows changed), not at the
+    // "didn't execute the statement" level.
     await applyMigrations(db)
-    const firstCount = db.executed.length
+    const firstVersionRow = await db.select<{ value: string }>(
+      "SELECT value FROM meta WHERE key='schema_version'",
+    )
     await applyMigrations(db)
-    expect(db.executed.length).toBe(firstCount)
+    const secondVersionRow = await db.select<{ value: string }>(
+      "SELECT value FROM meta WHERE key='schema_version'",
+    )
+    expect(secondVersionRow[0]?.value).toBe(firstVersionRow[0]?.value)
+    expect(secondVersionRow[0]?.value).toBe(String(CURRENT_SCHEMA_VERSION))
   })
 
-  test('upgrade from v2: only v3 DDL is applied, not v1/v2', async () => {
-    // Simulate a DB already at v2
+  test('upgrade from v2: v3 DDL is applied (re-runs all DDL but idempotently)', async () => {
+    // Simulate a DB already at v2: with self-healing migrations we re-run all
+    // CREATE IF NOT EXISTS statements, including v3 PRAGMA-guarded ALTERs.
     const v2db = mockAdapter()
-    // Pre-seed meta with version 2
     let metaVersion = 2
     const origSelect = v2db.select.bind(v2db)
     v2db.select = async (sql: string) => {
@@ -93,13 +102,21 @@ describe('migrations', () => {
     // v3 DDL must be present
     expect(ddl).toContain('google_birthdays')
     expect(ddl).toContain('google_relations')
-    // v1/v2 DDL must NOT be re-run
-    expect(ddl).not.toMatch(/CREATE TABLE.*contacts/)
-    expect(ddl).not.toMatch(/CREATE TABLE.*sync_conflicts/)
     // version updated to 3
     const versionRow = await v2db.select<{ value: string }>(
       "SELECT value FROM meta WHERE key='schema_version'",
     )
     expect(versionRow[0]?.value).toBe('3')
+  })
+
+  test('self-heals missing tables: re-runs DDL even when schema_version is already current', async () => {
+    // First boot: schema gets created.
+    await applyMigrations(db)
+    const firstCount = db.executed.length
+    expect(firstCount).toBeGreaterThan(0)
+    // Second boot: DDL is re-run (key property of self-healing migration).
+    // The previous behavior short-circuited; with self-healing this number grows.
+    await applyMigrations(db)
+    expect(db.executed.length).toBeGreaterThan(firstCount)
   })
 })

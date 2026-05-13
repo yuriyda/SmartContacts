@@ -75,12 +75,14 @@ describe('migrations v2', () => {
     expect(versionRow[0]?.value).toBe(String(CURRENT_SCHEMA_VERSION))
   })
 
-  test('idempotent: re-running applyMigrations does not re-execute DDL', async () => {
+  test('functionally idempotent: re-running applyMigrations leaves schema_version unchanged', async () => {
+    // Self-healing migrations re-execute IF NOT EXISTS DDL on every call.
+    // Idempotency is at SQL semantic level (no rows changed), not "skipped".
     await applyMigrations(db)
-    const firstCount = db.executed.length
+    const firstVersion = db.getVersion()
     await applyMigrations(db)
-    // Second call should be a no-op: version is already >= CURRENT_SCHEMA_VERSION.
-    expect(db.executed.length).toBe(firstCount)
+    expect(db.getVersion()).toBe(firstVersion)
+    expect(db.getVersion()).toBe(CURRENT_SCHEMA_VERSION)
   })
 
   test('upgrade from v1: starts with schema_version=1, v2 tables are created and version becomes CURRENT', async () => {
@@ -104,14 +106,17 @@ describe('migrations v2', () => {
     expect(versionRow[0]?.value).toBe(String(CURRENT_SCHEMA_VERSION))
   })
 
-  test('upgrade from v1: v1 tables are NOT re-created (only version update + v2 DDL)', async () => {
+  test('self-heals: v1 tables ARE re-issued (CREATE IF NOT EXISTS = harmless re-run)', async () => {
+    // With self-healing migrations, all DDL re-runs on every boot. This ensures
+    // that if any prior migration left the schema in an inconsistent state
+    // (e.g. meta updated without DDL committing), the next boot recreates
+    // anything missing. Since all statements are CREATE IF NOT EXISTS, this is
+    // semantically a no-op for already-present tables.
     const dbV1 = mockAdapter(1)
     await applyMigrations(dbV1)
-
-    // v1 DDL should NOT appear in executed statements (only v2 and the UPDATE meta).
     const ddl = dbV1.executed.join('\n')
-    expect(ddl).not.toMatch(/CREATE TABLE IF NOT EXISTS contacts/)
-    expect(ddl).not.toMatch(/CREATE TABLE IF NOT EXISTS meta/)
+    expect(ddl).toMatch(/CREATE TABLE IF NOT EXISTS contacts/)
+    expect(ddl).toMatch(/CREATE TABLE IF NOT EXISTS meta/)
   })
 
   test('all 6 v2 tables are present (count check)', async () => {

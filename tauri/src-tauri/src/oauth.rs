@@ -150,3 +150,40 @@ pub async fn oauth_await_code(
     .map_err(|_| "OAUTH_TIMEOUT".to_string())? // timeout elapsed
     .map_err(|e| e.to_string())? // spawn_blocking JoinError
 }
+
+/// Open a URL in the user's default system browser.
+///
+/// `window.open()` inside the Tauri WebView creates a NEW Tauri window with its
+/// own IPC context; we want the system browser so the OAuth loopback redirect
+/// stays in the user's normal browser session (cookies, password manager, etc.)
+/// and the WebView's IPC context isn't disrupted.
+///
+/// Platform-specific spawn:
+///   - Windows: `cmd /C start "" <url>`
+///   - macOS:   `open <url>`
+///   - Linux:   `xdg-open <url>`
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}

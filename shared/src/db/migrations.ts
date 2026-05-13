@@ -202,21 +202,18 @@ export async function applyMigrations(db: DbAdapter): Promise<void> {
   } catch {
     current = 0
   }
-  if (current >= CURRENT_SCHEMA_VERSION) return
 
-  // All migration statements for every version MUST run inside this transaction,
-  // and `schema_version` must be written last. Writing the version outside `tx`
-  // (or before all DDL completes) risks a half-applied schema after a crash.
+  // Self-healing: ALWAYS run all DDL up to CURRENT_SCHEMA_VERSION, even if
+  // `schema_version` already records the target version. All v1/v2 statements
+  // use `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`, and v3
+  // checks PRAGMA table_info before ALTER. So re-running is a near-zero-cost
+  // no-op when the schema is consistent, but recovers gracefully if any prior
+  // migration was interrupted (or the meta row was set without the DDL
+  // actually committing). We DO NOT short-circuit on `current >= TARGET` here.
   await db.transaction(async (tx) => {
-    if (current < 1) {
-      for (const stmt of v1) await tx.execute(stmt)
-    }
-    if (current < 2) {
-      for (const stmt of v2) await tx.execute(stmt)
-    }
-    if (current < 3) {
-      await applyV3(tx)
-    }
+    for (const stmt of v1) await tx.execute(stmt)
+    for (const stmt of v2) await tx.execute(stmt)
+    await applyV3(tx)
     const version = String(CURRENT_SCHEMA_VERSION)
     if (current === 0) {
       await tx.execute(`INSERT INTO meta (key, value) VALUES ('schema_version', ?)`, [version])
