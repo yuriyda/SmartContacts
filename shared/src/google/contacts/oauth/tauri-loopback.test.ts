@@ -2,7 +2,7 @@
 // All Tauri deps (invoke, openUrl) and fetch are injected mocks — no real network calls.
 
 import { describe, it, expect, vi } from 'vitest'
-import { runTauriLoopbackOauthFlow, refreshAccessToken } from './tauri-loopback'
+import { runTauriLoopbackOauthFlow, refreshAccessToken, InvalidGrantError } from './tauri-loopback'
 import { ScopeViolationError } from '../shared/errors'
 import { OAUTH_SCOPE } from './config'
 
@@ -135,6 +135,26 @@ describe('runTauriLoopbackOauthFlow', () => {
     ).rejects.toThrow(ScopeViolationError)
   })
 
+  it('throws OAUTH_NO_REFRESH_TOKEN when token response has empty-string refresh_token', async () => {
+    const invoke = makeInvokeMock()
+    const openUrl = vi.fn().mockResolvedValue(undefined)
+    const fetchImpl = makeFetchMock(makeTokenResponse({ refresh_token: '' }))
+
+    await expect(
+      runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID }),
+    ).rejects.toThrow('OAUTH_NO_REFRESH_TOKEN')
+  })
+
+  it('throws OAUTH_NO_REFRESH_TOKEN when token response has no refresh_token field', async () => {
+    const invoke = makeInvokeMock()
+    const openUrl = vi.fn().mockResolvedValue(undefined)
+    const fetchImpl = makeFetchMock(makeTokenResponse({ refresh_token: null }))
+
+    await expect(
+      runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID }),
+    ).rejects.toThrow('OAUTH_NO_REFRESH_TOKEN')
+  })
+
   it('propagates invoke rejection (simulates Rust state-mismatch error)', async () => {
     const invoke = vi.fn().mockImplementation(async (cmd: string) => {
       if (cmd === 'oauth_start') return 8888
@@ -191,10 +211,34 @@ describe('refreshAccessToken', () => {
   })
 
   it('throws when token endpoint returns non-ok status', async () => {
-    const fetchImpl = makeFetchMock({ error: 'invalid_grant' }, 400)
+    const fetchImpl = makeFetchMock({ error: 'server_error' }, 500)
 
     await expect(
       refreshAccessToken({ refreshToken: 'expired-rt', clientId: TEST_CLIENT_ID, fetchImpl }),
-    ).rejects.toThrow('Token refresh failed (400)')
+    ).rejects.toThrow('Token refresh failed (500)')
+  })
+
+  it('throws InvalidGrantError when Google returns invalid_grant (HTTP 400)', async () => {
+    const fetchImpl = makeFetchMock(
+      { error: 'invalid_grant', error_description: 'Token has been revoked' },
+      400,
+    )
+
+    await expect(
+      refreshAccessToken({ refreshToken: 'revoked-rt', clientId: TEST_CLIENT_ID, fetchImpl }),
+    ).rejects.toBeInstanceOf(InvalidGrantError)
+  })
+
+  it('InvalidGrantError message contains INVALID_GRANT', async () => {
+    const fetchImpl = makeFetchMock({ error: 'invalid_grant' }, 400)
+
+    const err = await refreshAccessToken({
+      refreshToken: 'expired-rt',
+      clientId: TEST_CLIENT_ID,
+      fetchImpl,
+    }).catch((e: unknown) => e)
+
+    expect(err).toBeInstanceOf(InvalidGrantError)
+    expect((err as Error).message).toContain('INVALID_GRANT')
   })
 })

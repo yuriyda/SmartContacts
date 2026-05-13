@@ -43,8 +43,45 @@ interface TokenEndpointResponse {
   access_token: string
   refresh_token?: string
   expires_in: number
-  scope: string
-  token_type: string
+  scope?: string
+  token_type?: string
+  error?: string
+}
+
+// ---------------------------------------------------------------------------
+// Error type for revoked / expired refresh tokens
+
+/**
+ * Thrown by refreshAccessToken when Google returns invalid_grant (HTTP 400).
+ * Indicates the refresh token is no longer valid — user revoked access or
+ * the token expired. Callers should clear stored tokens and prompt re-auth.
+ */
+export class InvalidGrantError extends Error {
+  constructor() {
+    super('INVALID_GRANT: Refresh token is no longer valid (user revoked access or token expired).')
+    this.name = 'InvalidGrantError'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared token response parser
+
+/**
+ * Parses a successful token endpoint JSON response into a typed structure.
+ * refreshToken is null when Google did not include it (acceptable on refresh;
+ * the initial-auth caller must reject null before this function is reached).
+ */
+function parseTokenResponse(json: TokenEndpointResponse): {
+  accessToken: string
+  refreshToken: string | null
+  expiresIn: number
+} {
+  return {
+    accessToken: json.access_token,
+    refreshToken:
+      json.refresh_token != null && json.refresh_token !== '' ? json.refresh_token : null,
+    expiresIn: json.expires_in,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,13 +199,28 @@ export async function runTauriLoopbackOauthFlow(
   const tokenData = (await tokenResponse.json()) as TokenEndpointResponse
 
   // Step i: Verify granted scope — throws ScopeViolationError if scope differs
-  verifyGrantedScope(tokenData.scope)
+  verifyGrantedScope(tokenData.scope ?? '')
 
-  // Step j: Return tokens
+  // Step j: Parse and validate tokens
+  const parsed = parseTokenResponse(tokenData)
+
+  // Google MUST return a refresh_token on the initial authorization code exchange.
+  // It is omitted only when the user previously granted offline access and
+  // prompt=consent was not used — but we always request prompt=consent above, so
+  // receiving no refresh_token here is an unexpected / misconfigured state.
+  if (parsed.refreshToken === null) {
+    throw new Error(
+      'OAUTH_NO_REFRESH_TOKEN: Google did not return a refresh_token. ' +
+        'Make sure you requested access_type=offline and prompt=consent, and that the user ' +
+        'has not previously granted offline access to this client (in which case Google omits ' +
+        'refresh_token unless prompt=consent forces re-issuance).',
+    )
+  }
+
   return {
-    accessToken: tokenData.access_token,
-    refreshToken: tokenData.refresh_token ?? '',
-    expiresIn: tokenData.expires_in,
+    accessToken: parsed.accessToken,
+    refreshToken: parsed.refreshToken,
+    expiresIn: parsed.expiresIn,
     grantedAt: new Date().toISOString(),
   }
 }
@@ -205,18 +257,36 @@ export async function refreshAccessToken(deps: RefreshDeps): Promise<RefreshToke
   })
 
   if (!response.ok) {
-    const errText = await response.text()
+    // Detect Google's invalid_grant error (revoked token / expired grant).
+    // Parse as JSON first; fall back to text for non-JSON error bodies.
+    let errorCode: string | undefined
+    let errText: string
+    try {
+      const errBody = (await response.json()) as TokenEndpointResponse
+      errorCode = errBody.error
+      errText = JSON.stringify(errBody)
+    } catch {
+      errText = await response.text()
+    }
+
+    if (errorCode === 'invalid_grant') {
+      throw new InvalidGrantError()
+    }
+
     throw new Error(`Token refresh failed (${response.status}): ${errText}`)
   }
 
   const data = (await response.json()) as TokenEndpointResponse
 
   // Always verify scope on refresh responses too
-  verifyGrantedScope(data.scope)
+  verifyGrantedScope(data.scope ?? '')
+
+  const parsed = parseTokenResponse(data)
 
   return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token ?? null,
-    expiresIn: data.expires_in,
+    accessToken: parsed.accessToken,
+    // null when Google did not rotate the refresh token (expected on most refreshes)
+    refreshToken: parsed.refreshToken,
+    expiresIn: parsed.expiresIn,
   }
 }

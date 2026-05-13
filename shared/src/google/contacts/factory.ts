@@ -18,7 +18,11 @@ import { ulid } from '../../ulid'
 import type { DbAdapter } from '../../db/adapter'
 import { rowToContact } from '../../db/contactRow'
 
-import { runTauriLoopbackOauthFlow, refreshAccessToken } from './oauth/tauri-loopback'
+import {
+  runTauriLoopbackOauthFlow,
+  refreshAccessToken,
+  InvalidGrantError,
+} from './oauth/tauri-loopback'
 import type { TokenStore } from './oauth/token-store-tauri'
 import { makeClientIdStore, type ClientIdStore } from './oauth/client-id-store'
 import { isConsentFresh } from './oauth/consent-policy'
@@ -143,7 +147,8 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
     }
 
     const refreshToken = await opts.tokenStore.read()
-    if (refreshToken === null) {
+    // Treat both null (never connected) and empty string (bug guard) as not connected.
+    if (refreshToken === null || refreshToken === '') {
       throw new Error('NOT_CONNECTED')
     }
 
@@ -154,11 +159,29 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
       )
     }
 
-    const result = await refreshAccessToken({
-      refreshToken,
-      clientId,
-      ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
-    })
+    let result: Awaited<ReturnType<typeof refreshAccessToken>>
+    try {
+      result = await refreshAccessToken({
+        refreshToken,
+        clientId,
+        ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
+      })
+    } catch (err) {
+      if (err instanceof InvalidGrantError) {
+        // Refresh token is no longer valid — clear stored credentials and log disconnect.
+        await opts.tokenStore.clear()
+        tokenCache.accessToken = null
+        tokenCache.expiresAtMs = 0
+        await syncLogRepo.append({
+          runId: 'oauth-' + generateRunId(),
+          event: 'oauth_disconnected',
+          level: 'info',
+          payload: { reason: 'invalid_grant' },
+        })
+      }
+      throw err
+    }
+
     tokenCache.accessToken = result.accessToken
     tokenCache.expiresAtMs = now.getTime() + result.expiresIn * 1000
 
@@ -263,6 +286,11 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
       clientId,
       ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
     })
+    // Defensive guard: runTauriLoopbackOauthFlow already throws on missing
+    // refresh_token, but be safe — never write an empty string to the store.
+    if (!result.refreshToken) {
+      throw new Error('OAUTH_NO_REFRESH_TOKEN: OAuth flow completed but returned no refresh token.')
+    }
     await opts.tokenStore.write(result.refreshToken)
     await syncLogRepo.append({
       runId: 'oauth-' + generateRunId(),
@@ -307,7 +335,8 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
   }
 
   async function isConnected(): Promise<boolean> {
-    return (await opts.tokenStore.read()) !== null
+    const t = await opts.tokenStore.read()
+    return t !== null && t.length > 0
   }
 
   async function getPendingConflictCount(): Promise<number> {

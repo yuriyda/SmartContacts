@@ -17,11 +17,12 @@
 //  - All comments in English.
 
 import 'fake-indexeddb/auto'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { openWaSqliteAdapter } from '../../db/wa-sqlite-backend'
 import { applyMigrations } from '../../db/migrations'
 import { makeGoogleSyncRuntime } from './factory'
 import type { TokenStore } from './oauth/token-store-tauri'
+import { InvalidGrantError } from './oauth/tauri-loopback'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1020,6 +1021,124 @@ describe('resolveConflict — side effects', () => {
       `SELECT * FROM google_contacts_sync_log WHERE event = 'conflict_resolved'`,
     )
     expect(logs).toHaveLength(0)
+
+    await db.close()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// OAuth lifecycle: empty-string token, invalid_grant handling
+// ---------------------------------------------------------------------------
+
+describe('isConnected with empty-string token', () => {
+  it('returns false when token store holds an empty string', async () => {
+    const db = await freshDb('factory-test-isconnected-emptystr')
+    const tokenStore = makeMemoryTokenStore()
+    // Bypass the write guard — manually set empty string via the internal store
+    await tokenStore.write('')
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+    expect(await runtime.isConnected()).toBe(false)
+    await db.close()
+  })
+})
+
+describe('getAccessToken with empty refresh_token in store', () => {
+  it('surfaces NOT_CONNECTED error when token store holds an empty string', async () => {
+    const db = await freshDb('factory-test-getaccesstoken-emptystr')
+    const tokenStore = makeMemoryTokenStore()
+    await tokenStore.write('')
+    const fetchImpl = vi.fn() as unknown as typeof fetch
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+      fetchImpl,
+    })
+
+    // pullEngine.run() returns { kind: 'failed', error } rather than rejecting.
+    // Insert a client_id so we get past the consent-expired check.
+    await db.execute(
+      `INSERT INTO meta (key, value) VALUES ('google_contacts.oauth_client_id', '"test-client-id"')`,
+    )
+    // Insert a consent record so CONSENT_EXPIRED is not hit before getAccessToken.
+    const recentConsent = new Date(Date.now() - 1000).toISOString()
+    await db.execute(
+      `INSERT INTO google_contacts_sync_log (run_id, ts, event, level, payload_json)
+       VALUES ('consent-run', ?, 'oauth_consent', 'info', '{}')`,
+      [recentConsent],
+    )
+
+    const result = await runtime.pullEngine.run({ confirmFn: async () => true })
+    expect(result.kind).toBe('failed')
+    if (result.kind === 'failed') {
+      expect(result.error.message).toContain('NOT_CONNECTED')
+    }
+
+    await db.close()
+  })
+})
+
+describe('getAccessToken when refresh fails with InvalidGrantError', () => {
+  it('clears tokenStore, appends oauth_disconnected with reason=invalid_grant, and rethrows', async () => {
+    const db = await freshDb('factory-test-getaccesstoken-invalidgrant')
+    const tokenStore = makeMemoryTokenStore()
+    await tokenStore.write('stored-refresh-token')
+
+    // fetchImpl that simulates invalid_grant on token refresh
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'invalid_grant' }),
+      text: async () => '{"error":"invalid_grant"}',
+    }) as unknown as typeof fetch
+
+    // We need a client_id in the meta table so getAccessToken proceeds to the refresh call
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+      fetchImpl,
+    })
+
+    // Insert a client_id into meta so the code gets past the NO_CLIENT_ID check
+    await db.execute(
+      `INSERT INTO meta (key, value) VALUES ('google_contacts.oauth_client_id', '"test-client-id"')`,
+    )
+
+    // pullEngine.run() returns { kind: 'failed', error } rather than rejecting.
+    // Insert a consent record so CONSENT_EXPIRED is not hit before getAccessToken.
+    const recentConsent = new Date(Date.now() - 1000).toISOString()
+    await db.execute(
+      `INSERT INTO google_contacts_sync_log (run_id, ts, event, level, payload_json)
+       VALUES ('consent-run', ?, 'oauth_consent', 'info', '{}')`,
+      [recentConsent],
+    )
+
+    const result = await runtime.pullEngine.run({ confirmFn: async () => true })
+    expect(result.kind).toBe('failed')
+    if (result.kind === 'failed') {
+      // InvalidGrantError is rethrown as-is and surfaces in the result.
+      expect(result.error).toBeInstanceOf(InvalidGrantError)
+      expect(result.error.message).toContain('INVALID_GRANT')
+    }
+
+    // tokenStore must be cleared
+    expect(await tokenStore.read()).toBeNull()
+
+    // oauth_disconnected event with reason=invalid_grant must be logged
+    const logs = await db.select<{ event: string; payload_json: string }>(
+      `SELECT event, payload_json FROM google_contacts_sync_log WHERE event = 'oauth_disconnected'`,
+    )
+    expect(logs.length).toBeGreaterThanOrEqual(1)
+    const payload = JSON.parse(logs[0]!.payload_json) as { reason: string }
+    expect(payload.reason).toBe('invalid_grant')
 
     await db.close()
   })
