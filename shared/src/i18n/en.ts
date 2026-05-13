@@ -227,7 +227,11 @@ export const en = {
   googleContacts: {
     setupTitle: 'Setup',
     clientIdLabel: 'Google OAuth Client ID',
-    clientIdHint: 'Get one from console.cloud.google.com → OAuth client ID → Desktop App type.',
+    clientIdHint:
+      'Get from console.cloud.google.com → OAuth client ID → Desktop App. Both ID and Secret are required (Google requires Secret even for Desktop type).',
+    clientSecretLabel: 'Google OAuth Client Secret',
+    clientSecretSaved: 'Client ID + Secret saved',
+    setClientSecretFirst: 'Set Client Secret first',
     save: 'Save',
     saving: 'Saving…',
     clientIdSaved: 'Client ID saved',

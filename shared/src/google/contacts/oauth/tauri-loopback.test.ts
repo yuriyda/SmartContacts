@@ -61,6 +61,7 @@ function makeInvokeMock(port = 8888, code = 'auth-code-123') {
 // runTauriLoopbackOauthFlow
 
 const TEST_CLIENT_ID = 'test-client-id.apps.googleusercontent.com'
+const TEST_CLIENT_SECRET = 'TEST_SECRET'
 
 describe('runTauriLoopbackOauthFlow', () => {
   it('happy path: returns accessToken, refreshToken, expiresIn, grantedAt', async () => {
@@ -73,6 +74,7 @@ describe('runTauriLoopbackOauthFlow', () => {
       openUrl,
       fetchImpl,
       clientId: TEST_CLIENT_ID,
+      clientSecret: TEST_CLIENT_SECRET,
     })
 
     expect(result.accessToken).toBe('access-token-abc')
@@ -88,7 +90,13 @@ describe('runTauriLoopbackOauthFlow', () => {
     const openUrl = vi.fn().mockResolvedValue(undefined)
     const fetchImpl = makeFetchMock(makeTokenResponse())
 
-    await runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID })
+    await runTauriLoopbackOauthFlow({
+      invoke,
+      openUrl,
+      fetchImpl,
+      clientId: TEST_CLIENT_ID,
+      clientSecret: TEST_CLIENT_SECRET,
+    })
 
     expect(invoke).toHaveBeenCalledWith('oauth_start', expect.any(Object))
     expect(invoke).toHaveBeenCalledWith('oauth_await_code', expect.any(Object))
@@ -99,7 +107,13 @@ describe('runTauriLoopbackOauthFlow', () => {
     const openUrl = vi.fn().mockResolvedValue(undefined)
     const fetchImpl = makeFetchMock(makeTokenResponse())
 
-    await runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID })
+    await runTauriLoopbackOauthFlow({
+      invoke,
+      openUrl,
+      fetchImpl,
+      clientId: TEST_CLIENT_ID,
+      clientSecret: TEST_CLIENT_SECRET,
+    })
 
     expect(openUrl).toHaveBeenCalledTimes(1)
     const url: string = openUrl.mock.calls[0][0] as string
@@ -119,7 +133,13 @@ describe('runTauriLoopbackOauthFlow', () => {
     )
 
     await expect(
-      runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID }),
+      runTauriLoopbackOauthFlow({
+        invoke,
+        openUrl,
+        fetchImpl,
+        clientId: TEST_CLIENT_ID,
+        clientSecret: TEST_CLIENT_SECRET,
+      }),
     ).rejects.toThrow(ScopeViolationError)
   })
 
@@ -131,7 +151,13 @@ describe('runTauriLoopbackOauthFlow', () => {
     )
 
     await expect(
-      runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID }),
+      runTauriLoopbackOauthFlow({
+        invoke,
+        openUrl,
+        fetchImpl,
+        clientId: TEST_CLIENT_ID,
+        clientSecret: TEST_CLIENT_SECRET,
+      }),
     ).rejects.toThrow(ScopeViolationError)
   })
 
@@ -141,7 +167,13 @@ describe('runTauriLoopbackOauthFlow', () => {
     const fetchImpl = makeFetchMock(makeTokenResponse({ refresh_token: '' }))
 
     await expect(
-      runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID }),
+      runTauriLoopbackOauthFlow({
+        invoke,
+        openUrl,
+        fetchImpl,
+        clientId: TEST_CLIENT_ID,
+        clientSecret: TEST_CLIENT_SECRET,
+      }),
     ).rejects.toThrow('OAUTH_NO_REFRESH_TOKEN')
   })
 
@@ -151,7 +183,13 @@ describe('runTauriLoopbackOauthFlow', () => {
     const fetchImpl = makeFetchMock(makeTokenResponse({ refresh_token: null }))
 
     await expect(
-      runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID }),
+      runTauriLoopbackOauthFlow({
+        invoke,
+        openUrl,
+        fetchImpl,
+        clientId: TEST_CLIENT_ID,
+        clientSecret: TEST_CLIENT_SECRET,
+      }),
     ).rejects.toThrow('OAUTH_NO_REFRESH_TOKEN')
   })
 
@@ -165,8 +203,77 @@ describe('runTauriLoopbackOauthFlow', () => {
     const fetchImpl = makeFetchMock(makeTokenResponse())
 
     await expect(
-      runTauriLoopbackOauthFlow({ invoke, openUrl, fetchImpl, clientId: TEST_CLIENT_ID }),
+      runTauriLoopbackOauthFlow({
+        invoke,
+        openUrl,
+        fetchImpl,
+        clientId: TEST_CLIENT_ID,
+        clientSecret: TEST_CLIENT_SECRET,
+      }),
     ).rejects.toThrow('state_mismatch')
+  })
+
+  it('token POST body includes client_secret', async () => {
+    const invoke = makeInvokeMock()
+    const openUrl = vi.fn().mockResolvedValue(undefined)
+    let capturedBody = ''
+    const fetchImpl = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      capturedBody = init.body as string
+      return {
+        ok: true,
+        status: 200,
+        json: async () => makeTokenResponse(),
+        text: async () => JSON.stringify(makeTokenResponse()),
+      }
+    }) as unknown as typeof fetch
+
+    await runTauriLoopbackOauthFlow({
+      invoke,
+      openUrl,
+      fetchImpl,
+      clientId: TEST_CLIENT_ID,
+      clientSecret: TEST_CLIENT_SECRET,
+    })
+
+    const params = new URLSearchParams(capturedBody)
+    expect(params.get('client_secret')).toBe(TEST_CLIENT_SECRET)
+    expect(params.get('client_id')).toBe(TEST_CLIENT_ID)
+  })
+
+  it('token POST body does NOT include client_secret in auth URL', async () => {
+    const invoke = makeInvokeMock()
+    const openUrl = vi.fn().mockResolvedValue(undefined)
+    const fetchImpl = makeFetchMock(makeTokenResponse())
+
+    await runTauriLoopbackOauthFlow({
+      invoke,
+      openUrl,
+      fetchImpl,
+      clientId: TEST_CLIENT_ID,
+      clientSecret: TEST_CLIENT_SECRET,
+    })
+
+    const authUrl = openUrl.mock.calls[0][0] as string
+    expect(authUrl).not.toContain('client_secret')
+  })
+
+  it('wraps client_secret_missing error in clear message', async () => {
+    const invoke = makeInvokeMock()
+    const openUrl = vi.fn().mockResolvedValue(undefined)
+    const fetchImpl = makeFetchMock(
+      { error: 'invalid_request', error_description: 'client_secret is missing' },
+      400,
+    )
+
+    await expect(
+      runTauriLoopbackOauthFlow({
+        invoke,
+        openUrl,
+        fetchImpl,
+        clientId: TEST_CLIENT_ID,
+        clientSecret: TEST_CLIENT_SECRET,
+      }),
+    ).rejects.toThrow('Token exchange failed (400)')
   })
 })
 
@@ -180,6 +287,7 @@ describe('refreshAccessToken', () => {
     const result = await refreshAccessToken({
       refreshToken: 'old-refresh-token',
       clientId: TEST_CLIENT_ID,
+      clientSecret: TEST_CLIENT_SECRET,
       fetchImpl,
     })
 
@@ -194,6 +302,7 @@ describe('refreshAccessToken', () => {
     const result = await refreshAccessToken({
       refreshToken: 'old-refresh-token',
       clientId: TEST_CLIENT_ID,
+      clientSecret: TEST_CLIENT_SECRET,
       fetchImpl,
     })
 
@@ -206,7 +315,12 @@ describe('refreshAccessToken', () => {
     )
 
     await expect(
-      refreshAccessToken({ refreshToken: 'rt', clientId: TEST_CLIENT_ID, fetchImpl }),
+      refreshAccessToken({
+        refreshToken: 'rt',
+        clientId: TEST_CLIENT_ID,
+        clientSecret: TEST_CLIENT_SECRET,
+        fetchImpl,
+      }),
     ).rejects.toThrow(ScopeViolationError)
   })
 
@@ -214,7 +328,12 @@ describe('refreshAccessToken', () => {
     const fetchImpl = makeFetchMock({ error: 'server_error' }, 500)
 
     await expect(
-      refreshAccessToken({ refreshToken: 'expired-rt', clientId: TEST_CLIENT_ID, fetchImpl }),
+      refreshAccessToken({
+        refreshToken: 'expired-rt',
+        clientId: TEST_CLIENT_ID,
+        clientSecret: TEST_CLIENT_SECRET,
+        fetchImpl,
+      }),
     ).rejects.toThrow('Token refresh failed (500)')
   })
 
@@ -225,7 +344,12 @@ describe('refreshAccessToken', () => {
     )
 
     await expect(
-      refreshAccessToken({ refreshToken: 'revoked-rt', clientId: TEST_CLIENT_ID, fetchImpl }),
+      refreshAccessToken({
+        refreshToken: 'revoked-rt',
+        clientId: TEST_CLIENT_ID,
+        clientSecret: TEST_CLIENT_SECRET,
+        fetchImpl,
+      }),
     ).rejects.toBeInstanceOf(InvalidGrantError)
   })
 
@@ -235,6 +359,7 @@ describe('refreshAccessToken', () => {
     const err = await refreshAccessToken({
       refreshToken: 'expired-rt',
       clientId: TEST_CLIENT_ID,
+      clientSecret: TEST_CLIENT_SECRET,
       fetchImpl,
     }).catch((e: unknown) => e)
 

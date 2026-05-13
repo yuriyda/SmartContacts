@@ -398,6 +398,88 @@ describe('connect() NO_CLIENT_ID guard', () => {
 })
 
 // ---------------------------------------------------------------------------
+// connect() — NO_CLIENT_SECRET guard
+// ---------------------------------------------------------------------------
+
+describe('connect() NO_CLIENT_SECRET guard', () => {
+  it('throws NO_CLIENT_SECRET when client_secret not set (client_id is set)', async () => {
+    const db = await freshDb('factory-test-connect-nosecret-1')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+    // Set client_id but NOT client_secret
+    await runtime.clientIdStore.set('some-client-id.apps.googleusercontent.com')
+    await expect(runtime.connect()).rejects.toThrow('NO_CLIENT_SECRET')
+    await db.close()
+  })
+
+  it('throws NO_CLIENT_SECRET when client_secret is empty string', async () => {
+    const db = await freshDb('factory-test-connect-nosecret-2')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+    await runtime.clientIdStore.set('some-client-id.apps.googleusercontent.com')
+    await runtime.clientSecretStore.set('')
+    await expect(runtime.connect()).rejects.toThrow('NO_CLIENT_SECRET')
+    await db.close()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// clientSecretStore
+// ---------------------------------------------------------------------------
+
+describe('clientSecretStore', () => {
+  it('is exposed on the runtime', async () => {
+    const db = await freshDb('factory-test-clientsecret-1')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+    expect(runtime.clientSecretStore).toBeDefined()
+    await db.close()
+  })
+
+  it('get() returns null before any set()', async () => {
+    const db = await freshDb('factory-test-clientsecret-2')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+    expect(await runtime.clientSecretStore.get()).toBeNull()
+    await db.close()
+  })
+
+  it('set() persists value readable via get()', async () => {
+    const db = await freshDb('factory-test-clientsecret-3')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+    await runtime.clientSecretStore.set('my-secret-value')
+    expect(await runtime.clientSecretStore.get()).toBe('my-secret-value')
+    await db.close()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // resolveConflict — side effects (spec §6.7)
 // ---------------------------------------------------------------------------
 
@@ -1107,9 +1189,12 @@ describe('getAccessToken when refresh fails with InvalidGrantError', () => {
       fetchImpl,
     })
 
-    // Insert a client_id into meta so the code gets past the NO_CLIENT_ID check
+    // Insert client_id and client_secret into meta so the code gets past both guards
     await db.execute(
       `INSERT INTO meta (key, value) VALUES ('google_contacts.oauth_client_id', '"test-client-id"')`,
+    )
+    await db.execute(
+      `INSERT INTO meta (key, value) VALUES ('google_contacts.oauth_client_secret', '"test-client-secret"')`,
     )
 
     // pullEngine.run() returns { kind: 'failed', error } rather than rejecting.

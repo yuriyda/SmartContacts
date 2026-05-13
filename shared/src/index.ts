@@ -69,4 +69,8 @@ export {
   type MakeGoogleSyncRuntimeOpts,
 } from './google/contacts/factory'
 export { makeClientIdStore, type ClientIdStore } from './google/contacts/oauth/client-id-store'
+export {
+  makeClientSecretStore,
+  type ClientSecretStore,
+} from './google/contacts/oauth/client-secret-store'
 export { LabelRepo, type GoogleLabelRow } from './google/contacts/read/label-repo'

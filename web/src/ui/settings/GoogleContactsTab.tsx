@@ -77,10 +77,12 @@ export function GoogleContactsTab({
   const [pendingConflictCount, setPendingConflictCount] = useState(0)
   const [lastSync, setLastSync] = useState<{ ts: string; appliedCount: number } | null>(null)
 
-  // ---- Setup section state (client_id input) ----
+  // ---- Setup section state (client_id and client_secret inputs) ----
   const [clientIdInput, setClientIdInput] = useState('')
+  const [clientSecretInput, setClientSecretInput] = useState('')
   const [savingClientId, setSavingClientId] = useState(false)
   const [hasClientId, setHasClientId] = useState(false)
+  const [hasClientSecret, setHasClientSecret] = useState(false)
 
   // ---- Action loading flags ----
   const [connecting, setConnecting] = useState(false)
@@ -120,13 +122,19 @@ export function GoogleContactsTab({
     setLastSync(info)
   }, [runtime])
 
-  // ---- Load client_id on mount / runtime change ----
+  // ---- Load client_id and client_secret on mount / runtime change ----
   useEffect(() => {
     if (!runtime) return
     void runtime.clientIdStore.get().then((val) => {
       if (val !== null) {
         setClientIdInput(val)
         setHasClientId(true)
+      }
+    })
+    void runtime.clientSecretStore.get().then((val) => {
+      if (val !== null && val !== '') {
+        setClientSecretInput(val)
+        setHasClientSecret(true)
       }
     })
   }, [runtime])
@@ -140,17 +148,22 @@ export function GoogleContactsTab({
 
   const handleSaveClientId = useCallback(async () => {
     if (!runtime) return
-    const value = clientIdInput.trim()
-    if (!value) return
+    const idValue = clientIdInput.trim()
+    const secretValue = clientSecretInput.trim()
+    if (!idValue || !secretValue) return
     setSavingClientId(true)
     try {
-      await runtime.clientIdStore.set(value)
+      await Promise.all([
+        runtime.clientIdStore.set(idValue),
+        runtime.clientSecretStore.set(secretValue),
+      ])
       setHasClientId(true)
-      onToast?.('Client ID saved')
+      setHasClientSecret(true)
+      onToast?.(t('googleContacts.clientSecretSaved') || 'Client ID + Secret saved')
     } finally {
       setSavingClientId(false)
     }
-  }, [runtime, clientIdInput, onToast])
+  }, [runtime, clientIdInput, clientSecretInput, onToast, t])
 
   const handleConnect = useCallback(async () => {
     if (!runtime) return
@@ -168,7 +181,9 @@ export function GoogleContactsTab({
       // eslint-disable-next-line no-console
       console.error('[GoogleContacts] Connect failed:', e)
       if (msg.startsWith('NO_CLIENT_ID')) {
-        onToast?.('Set Client ID first')
+        onToast?.(t('googleContacts.setClientIdFirst') || 'Set Client ID first')
+      } else if (msg.startsWith('NO_CLIENT_SECRET')) {
+        onToast?.(t('googleContacts.setClientSecretFirst') || 'Set Client Secret first')
       } else {
         onToast?.((t('googleContacts.connectFailed') || 'Connect failed') + ': ' + msg)
       }
@@ -342,9 +357,13 @@ export function GoogleContactsTab({
       {/* --- Setup section (visible only when NOT connected) --- */}
       {!isConnected && (
         <div className={`mb-4 p-3 rounded border ${TC.borderClass} ${TC.elevated}`}>
-          <div className={`text-sm font-medium ${TC.text} mb-2`}>Setup</div>
-          <label className={`block text-xs ${TC.textMuted} mb-1`}>Google OAuth Client ID</label>
-          <div className="flex items-center gap-2">
+          <div className={`text-sm font-medium ${TC.text} mb-2`}>
+            {t('googleContacts.setupTitle') || 'Setup'}
+          </div>
+          <label className={`block text-xs ${TC.textMuted} mb-1`}>
+            {t('googleContacts.clientIdLabel') || 'Google OAuth Client ID'}
+          </label>
+          <div className="flex items-center gap-2 mb-2">
             <input
               type="text"
               value={clientIdInput}
@@ -352,17 +371,34 @@ export function GoogleContactsTab({
               placeholder="xxx-yyy.apps.googleusercontent.com"
               className={`flex-1 px-2 py-1 text-sm rounded border ${TC.borderClass} bg-transparent ${TC.text}`}
             />
+          </div>
+          <label className={`block text-xs ${TC.textMuted} mb-1`}>
+            {t('googleContacts.clientSecretLabel') || 'Google OAuth Client Secret'}
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={clientSecretInput}
+              onChange={(e) => setClientSecretInput(e.target.value)}
+              placeholder="GOCSPX-…"
+              className={`flex-1 px-2 py-1 text-sm rounded border ${TC.borderClass} bg-transparent ${TC.text}`}
+            />
             <button
               type="button"
-              disabled={savingClientId || clientIdInput.trim() === ''}
+              disabled={
+                savingClientId || clientIdInput.trim() === '' || clientSecretInput.trim() === ''
+              }
               onClick={() => void handleSaveClientId()}
               className="px-3 py-1.5 rounded text-sm bg-sky-600 text-white hover:bg-sky-500 disabled:opacity-50"
             >
-              {savingClientId ? 'Saving…' : 'Save'}
+              {savingClientId
+                ? t('googleContacts.saving') || 'Saving…'
+                : t('googleContacts.save') || 'Save'}
             </button>
           </div>
           <p className={`text-xs ${TC.textMuted} mt-2`}>
-            Get one from console.cloud.google.com → OAuth client ID → Desktop App type.
+            {t('googleContacts.clientIdHint') ||
+              'Get from console.cloud.google.com → OAuth client ID → Desktop App. Both ID and Secret are required (Google requires Secret even for Desktop type).'}
           </p>
         </div>
       )}
@@ -460,7 +496,7 @@ export function GoogleContactsTab({
         ) : (
           <button
             type="button"
-            disabled={!hasClientId || connecting}
+            disabled={!hasClientId || !hasClientSecret || connecting}
             className="px-3 py-1.5 rounded text-sm bg-sky-600 text-white hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={() => void handleConnect()}
           >

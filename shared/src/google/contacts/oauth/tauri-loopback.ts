@@ -2,12 +2,17 @@
 // Orchestrates: PKCE code generation → Tauri TCP loopback listener → browser consent →
 // authorization code exchange → scope verification → token return.
 //
-// client_id is injected via deps.clientId (read from meta table by factory.ts at call-time).
-// This avoids binding client_id at construction time so UI changes take effect immediately.
+// client_id and client_secret are injected via deps (read from meta table by factory.ts at
+// call-time). This avoids binding credentials at construction time so UI changes take effect
+// immediately.
+//
+// Google's Desktop OAuth docs require client_secret in the POST /token body even for Desktop
+// type clients (RFC 8252 acknowledges the secret is not truly confidential for native apps,
+// but Google's token endpoint enforces its presence regardless).
 //
 // EDITING RULES:
 // - Do NOT import @tauri-apps/* directly — invoke and openUrl are injected deps (platform-agnostic).
-// - Do NOT add client_secret to token exchange — PKCE only (no secret flow).
+// - client_secret belongs ONLY in the token POST body — never in the auth URL.
 // - verifyGrantedScope must be called on EVERY token response before tokens are returned (L1.2).
 // - refreshAccessToken must also verify scope on every refresh response.
 // - All comments must remain in English.
@@ -95,6 +100,8 @@ export interface TauriLoopbackDeps {
   openUrl: (url: string) => Promise<void>
   /** Google OAuth client_id — read from meta table at call-time, injected here. */
   clientId: string
+  /** Google OAuth client_secret — required by Google's token endpoint even for Desktop type. */
+  clientSecret: string
   /** Optional custom fetch implementation (defaults to globalThis.fetch). */
   fetchImpl?: typeof fetch
 }
@@ -176,10 +183,13 @@ export async function runTauriLoopbackOauthFlow(
   // Step g: Wait for Tauri to capture the authorization code from the loopback redirect
   const code = (await deps.invoke('oauth_await_code', { state })) as string
 
-  // Step h: Exchange authorization code for tokens (NO client_secret — PKCE only)
+  // Step h: Exchange authorization code for tokens
+  // client_secret is required by Google's token endpoint even for Desktop type clients.
+  // PKCE (code_verifier) is kept for additional security per RFC 8252.
   const tokenBody = new URLSearchParams({
     code,
     client_id: deps.clientId,
+    client_secret: deps.clientSecret,
     redirect_uri: redirectUri,
     grant_type: 'authorization_code',
     code_verifier: codeVerifier,
@@ -233,6 +243,8 @@ export interface RefreshDeps {
   refreshToken: string
   /** Google OAuth client_id — read from meta table at call-time, injected here. */
   clientId: string
+  /** Google OAuth client_secret — required by Google's token endpoint even for Desktop type. */
+  clientSecret: string
   fetchImpl?: typeof fetch
 }
 
@@ -248,6 +260,7 @@ export async function refreshAccessToken(deps: RefreshDeps): Promise<RefreshToke
     grant_type: 'refresh_token',
     refresh_token: deps.refreshToken,
     client_id: deps.clientId,
+    client_secret: deps.clientSecret,
   })
 
   const response = await fetchFn(OAUTH_TOKEN_URL, {

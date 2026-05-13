@@ -25,6 +25,7 @@ import {
 } from './oauth/tauri-loopback'
 import type { TokenStore } from './oauth/token-store-tauri'
 import { makeClientIdStore, type ClientIdStore } from './oauth/client-id-store'
+import { makeClientSecretStore, type ClientSecretStore } from './oauth/client-secret-store'
 import { isConsentFresh } from './oauth/consent-policy'
 
 import { GoogleContactsClient } from './read/client'
@@ -91,6 +92,8 @@ export interface GoogleSyncRuntime {
   }
   /** UI Setup section reads/writes client_id via this store (persisted in meta table). */
   clientIdStore: ClientIdStore
+  /** UI Setup section reads/writes client_secret via this store (persisted in meta table). */
+  clientSecretStore: ClientSecretStore
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +103,9 @@ export interface GoogleSyncRuntime {
 export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSyncRuntime {
   const { db } = opts
 
-  // --- Step 0: client_id store (persisted in meta table; read at OAuth-time, never cached) ---
+  // --- Step 0: client_id and client_secret stores (persisted in meta table; read at OAuth-time, never cached) ---
   const clientIdStore = makeClientIdStore(db)
+  const clientSecretStore = makeClientSecretStore(db)
 
   // --- Step 1: Construct repos ---
   const snapshotRepo = new SnapshotRepo(db)
@@ -159,11 +163,19 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
       )
     }
 
+    const clientSecret = await clientSecretStore.get()
+    if (clientSecret === null || clientSecret === '') {
+      throw new Error(
+        'NO_CLIENT_SECRET: Set your Google OAuth Client Secret in Settings → Google Contacts → Setup.',
+      )
+    }
+
     let result: Awaited<ReturnType<typeof refreshAccessToken>>
     try {
       result = await refreshAccessToken({
         refreshToken,
         clientId,
+        clientSecret,
         ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
       })
     } catch (err) {
@@ -281,10 +293,17 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
         'NO_CLIENT_ID: Set your Google OAuth Client ID in Settings → Google Contacts → Setup.',
       )
     }
+    const clientSecret = await clientSecretStore.get()
+    if (clientSecret === null || clientSecret === '') {
+      throw new Error(
+        'NO_CLIENT_SECRET: Set your Google OAuth Client Secret in Settings → Google Contacts → Setup.',
+      )
+    }
     const result = await runTauriLoopbackOauthFlow({
       invoke: opts.oauthInvoke,
       openUrl: opts.oauthOpenUrl,
       clientId,
+      clientSecret,
       ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
     })
     // Defensive guard: runTauriLoopbackOauthFlow already throws on missing
@@ -999,5 +1018,6 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
       syncLog: syncLogRepo,
     },
     clientIdStore,
+    clientSecretStore,
   }
 }

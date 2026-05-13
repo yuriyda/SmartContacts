@@ -230,7 +230,11 @@ export const ru: Dict = {
   googleContacts: {
     setupTitle: 'Настройка',
     clientIdLabel: 'Google OAuth Client ID',
-    clientIdHint: 'Получить: console.cloud.google.com → OAuth client ID → тип «Desktop App».',
+    clientIdHint:
+      'Получить: console.cloud.google.com → OAuth client ID → Desktop App. Нужны оба: Client ID и Client Secret (Google требует Secret даже для Desktop-типа).',
+    clientSecretLabel: 'Google OAuth Client Secret',
+    clientSecretSaved: 'Client ID + Secret сохранены',
+    setClientSecretFirst: 'Сначала укажи Client Secret',
     save: 'Сохранить',
     saving: 'Сохраняю…',
     clientIdSaved: 'Client ID сохранён',
