@@ -268,7 +268,10 @@ export function GoogleContactsTab({
       customValueJson?: string,
     ): Promise<void> => {
       if (!runtime) return
-      await runtime.repos.conflict.resolve(id, resolution, customValueJson ?? null)
+      // Use runtime.resolveConflict — applies real side-effects atomically (spec §6.7).
+      await runtime.resolveConflict(id, resolution, customValueJson ?? null)
+      // Refresh contacts in case resolution mutated the contacts row.
+      refreshContacts()
       // Refresh the modal's open conflicts list and counters.
       if (resolveContactId !== null) {
         const rows = await runtime.repos.conflict.listPending({ contactId: resolveContactId })
@@ -277,7 +280,7 @@ export function GoogleContactsTab({
       }
       await refreshStatus()
     },
-    [runtime, resolveContactId, refreshStatus],
+    [runtime, resolveContactId, refreshStatus, refreshContacts],
   )
 
   // ---- Format helpers ----

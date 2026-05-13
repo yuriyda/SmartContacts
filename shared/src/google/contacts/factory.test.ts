@@ -9,6 +9,7 @@
 //  - disconnect({deleteImported: false}): clears tokenStore + sync tables, keeps contacts.
 //  - disconnect({deleteImported: true}): same + deletes Google-imported contacts.
 //  - connect() is NOT tested here (requires real OAuth flow; covered by tauri-loopback.test.ts).
+//  - resolveConflict(): all 10 side-effect cases from spec §6.7.
 //
 // Rules:
 //  - Each test uses a unique DB name to prevent state leakage.
@@ -391,6 +392,635 @@ describe('connect() NO_CLIENT_ID guard', () => {
     })
     // No clientId set in meta table
     await expect(runtime.connect()).rejects.toThrow('NO_CLIENT_ID')
+    await db.close()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveConflict — side effects (spec §6.7)
+// ---------------------------------------------------------------------------
+
+/** Seed a minimal contact + snapshot + pending conflict row for tests. */
+async function seedConflict(
+  db: Awaited<ReturnType<typeof freshDb>>,
+  opts: {
+    dbName: string
+    contactId: string
+    googleResourceName: string
+    fieldPath: string
+    baseValueJson?: string | null
+    googleValueJson?: string | null
+    localValueJson: string
+    /** Initial contacts row column values (beyond id/google_resource_name). */
+    contactExtra?: Record<string, unknown>
+    /** Initial snapshot payload (JSON-serializable object). */
+    snapshotPayload?: Record<string, unknown>
+  },
+): Promise<number> {
+  const now = new Date().toISOString()
+  const extra = opts.contactExtra ?? {}
+  const cols = Object.keys(extra)
+  const extraCols = cols.length > 0 ? ', ' + cols.join(', ') : ''
+  const extraPlaceholders = cols.length > 0 ? ', ' + cols.map(() => '?').join(', ') : ''
+  const extraVals = cols.map((c) => extra[c])
+
+  await db.execute(
+    `INSERT INTO contacts
+       (id, display_name, google_resource_name, google_etag, created_at, updated_at, lamport_ts, device_id${extraCols})
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?${extraPlaceholders})`,
+    [
+      opts.contactId,
+      'Test Person',
+      opts.googleResourceName,
+      'etag-v1',
+      now,
+      now,
+      0,
+      'google_sync',
+      ...extraVals,
+    ],
+  )
+
+  const snapshotPayload = opts.snapshotPayload ?? {}
+  await db.execute(
+    `INSERT INTO google_contact_snapshots (google_resource_name, etag, update_time, payload_json, last_synced_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [opts.googleResourceName, 'etag-v1', now, JSON.stringify(snapshotPayload), now],
+  )
+
+  await db.execute(
+    `INSERT INTO sync_conflicts
+       (contact_id, google_resource_name, field_path, base_value_json, google_value_json, local_value_json, status, detected_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+    [
+      opts.contactId,
+      opts.googleResourceName,
+      opts.fieldPath,
+      opts.baseValueJson ?? null,
+      opts.googleValueJson ?? null,
+      opts.localValueJson,
+      now,
+    ],
+  )
+
+  const rows = await db.select<{ id: number }>(
+    `SELECT id FROM sync_conflicts WHERE contact_id = ? AND field_path = ?`,
+    [opts.contactId, opts.fieldPath],
+  )
+  return rows[0]!.id
+}
+
+describe('resolveConflict — side effects', () => {
+  // ---------- case (a): 'local' on scalar field ----------
+  it('(a) local on notesMd: contacts unchanged, snapshot updated, conflict resolved', async () => {
+    const db = await freshDb('factory-rc-a')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const cid = '01RCTEST0000000000000000A0'
+    const rn = 'people/rc-a'
+    const localNotes = 'My local notes'
+    const googleNotes = 'Google notes'
+
+    const conflictId = await seedConflict(db, {
+      dbName: 'factory-rc-a',
+      contactId: cid,
+      googleResourceName: rn,
+      fieldPath: 'notesMd',
+      baseValueJson: JSON.stringify('old notes'),
+      googleValueJson: JSON.stringify(googleNotes),
+      localValueJson: JSON.stringify(localNotes),
+      contactExtra: { notes_md: localNotes },
+      snapshotPayload: { notesMd: 'old notes' },
+    })
+
+    await runtime.resolveConflict(conflictId, 'local')
+
+    // contacts row: unchanged
+    const contacts = await db.select<{ notes_md: string | null }>(
+      'SELECT notes_md FROM contacts WHERE id = ?',
+      [cid],
+    )
+    expect(contacts[0]?.notes_md).toBe(localNotes)
+
+    // snapshot.payload_json.notesMd → local value
+    const snaps = await db.select<{ payload_json: string }>(
+      'SELECT payload_json FROM google_contact_snapshots WHERE google_resource_name = ?',
+      [rn],
+    )
+    const payload = JSON.parse(snaps[0]!.payload_json) as Record<string, unknown>
+    expect(payload['notesMd']).toBe(localNotes)
+
+    // conflict resolved
+    const conflicts = await db.select<{ status: string; resolution: string }>(
+      'SELECT status, resolution FROM sync_conflicts WHERE id = ?',
+      [conflictId],
+    )
+    expect(conflicts[0]?.status).toBe('resolved')
+    expect(conflicts[0]?.resolution).toBe('local')
+
+    await db.close()
+  })
+
+  // ---------- case (b): 'google' on scalar field ----------
+  it('(b) google on notesMd: contacts updated, snapshot updated, conflict resolved', async () => {
+    const db = await freshDb('factory-rc-b')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const cid = '01RCTEST0000000000000000B0'
+    const rn = 'people/rc-b'
+    const localNotes = 'My local notes'
+    const googleNotes = 'Google notes'
+
+    const conflictId = await seedConflict(db, {
+      dbName: 'factory-rc-b',
+      contactId: cid,
+      googleResourceName: rn,
+      fieldPath: 'notesMd',
+      baseValueJson: JSON.stringify('old notes'),
+      googleValueJson: JSON.stringify(googleNotes),
+      localValueJson: JSON.stringify(localNotes),
+      contactExtra: { notes_md: localNotes },
+      snapshotPayload: { notesMd: 'old notes' },
+    })
+
+    await runtime.resolveConflict(conflictId, 'google')
+
+    // contacts row updated to Google value
+    const contacts = await db.select<{ notes_md: string | null }>(
+      'SELECT notes_md FROM contacts WHERE id = ?',
+      [cid],
+    )
+    expect(contacts[0]?.notes_md).toBe(googleNotes)
+
+    // snapshot.payload_json.notesMd → google value
+    const snaps = await db.select<{ payload_json: string }>(
+      'SELECT payload_json FROM google_contact_snapshots WHERE google_resource_name = ?',
+      [rn],
+    )
+    const payload = JSON.parse(snaps[0]!.payload_json) as Record<string, unknown>
+    expect(payload['notesMd']).toBe(googleNotes)
+
+    const conflicts = await db.select<{ status: string; resolution: string }>(
+      'SELECT status, resolution FROM sync_conflicts WHERE id = ?',
+      [conflictId],
+    )
+    expect(conflicts[0]?.status).toBe('resolved')
+    expect(conflicts[0]?.resolution).toBe('google')
+
+    await db.close()
+  })
+
+  // ---------- case (c): 'custom' on scalar field ----------
+  it('(c) custom on notesMd: contacts and snapshot updated to custom value', async () => {
+    const db = await freshDb('factory-rc-c')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const cid = '01RCTEST0000000000000000C0'
+    const rn = 'people/rc-c'
+    const customNotes = 'Custom merged notes'
+
+    const conflictId = await seedConflict(db, {
+      dbName: 'factory-rc-c',
+      contactId: cid,
+      googleResourceName: rn,
+      fieldPath: 'notesMd',
+      baseValueJson: JSON.stringify('old notes'),
+      googleValueJson: JSON.stringify('Google notes'),
+      localValueJson: JSON.stringify('My local notes'),
+      contactExtra: { notes_md: 'My local notes' },
+      snapshotPayload: { notesMd: 'old notes' },
+    })
+
+    await runtime.resolveConflict(conflictId, 'custom', JSON.stringify(customNotes))
+
+    const contacts = await db.select<{ notes_md: string | null }>(
+      'SELECT notes_md FROM contacts WHERE id = ?',
+      [cid],
+    )
+    expect(contacts[0]?.notes_md).toBe(customNotes)
+
+    const snaps = await db.select<{ payload_json: string }>(
+      'SELECT payload_json FROM google_contact_snapshots WHERE google_resource_name = ?',
+      [rn],
+    )
+    const payload = JSON.parse(snaps[0]!.payload_json) as Record<string, unknown>
+    expect(payload['notesMd']).toBe(customNotes)
+
+    const conflicts = await db.select<{
+      status: string
+      resolution: string
+      custom_value_json: string | null
+    }>('SELECT status, resolution, custom_value_json FROM sync_conflicts WHERE id = ?', [
+      conflictId,
+    ])
+    expect(conflicts[0]?.status).toBe('resolved')
+    expect(conflicts[0]?.resolution).toBe('custom')
+    expect(conflicts[0]?.custom_value_json).toBe(JSON.stringify(customNotes))
+
+    await db.close()
+  })
+
+  // ---------- case (d): 'google' on photos[0] ----------
+  it('(d) google on photos[0]: pending avatar consumed, avatars written, contacts.avatar_hash updated', async () => {
+    const db = await freshDb('factory-rc-d')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const cid = '01RCTEST0000000000000000D0'
+    const rn = 'people/rc-d'
+    const now = new Date().toISOString()
+
+    const conflictId = await seedConflict(db, {
+      dbName: 'factory-rc-d',
+      contactId: cid,
+      googleResourceName: rn,
+      fieldPath: 'photos[0]',
+      baseValueJson: JSON.stringify('hash-base'),
+      googleValueJson: JSON.stringify('hash-google'),
+      localValueJson: JSON.stringify('hash-local'),
+      contactExtra: { avatar_hash: 'hash-local' },
+      snapshotPayload: { photoContentHash: 'hash-base' },
+    })
+
+    // Insert pending_google_avatars row
+    const fakeBlob = new Uint8Array([1, 2, 3])
+    await db.execute(
+      `INSERT INTO pending_google_avatars (contact_id, mime, blob, hash, fetched_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [cid, 'image/jpeg', fakeBlob, 'hash-google', now],
+    )
+
+    await runtime.resolveConflict(conflictId, 'google')
+
+    // pending_google_avatars deleted
+    const pending = await db.select('SELECT * FROM pending_google_avatars WHERE contact_id = ?', [
+      cid,
+    ])
+    expect(pending).toHaveLength(0)
+
+    // avatars row written
+    const avatars = await db.select<{ hash: string; mime: string }>(
+      'SELECT hash, mime FROM avatars WHERE contact_id = ?',
+      [cid],
+    )
+    expect(avatars).toHaveLength(1)
+    expect(avatars[0]?.hash).toBe('hash-google')
+    expect(avatars[0]?.mime).toBe('image/jpeg')
+
+    // contacts.avatar_hash updated
+    const contacts = await db.select<{ avatar_hash: string | null }>(
+      'SELECT avatar_hash FROM contacts WHERE id = ?',
+      [cid],
+    )
+    expect(contacts[0]?.avatar_hash).toBe('hash-google')
+
+    // snapshot photoContentHash updated
+    const snaps = await db.select<{ payload_json: string }>(
+      'SELECT payload_json FROM google_contact_snapshots WHERE google_resource_name = ?',
+      [rn],
+    )
+    const payload = JSON.parse(snaps[0]!.payload_json) as Record<string, unknown>
+    expect(payload['photoContentHash']).toBe('hash-google')
+
+    await db.close()
+  })
+
+  // ---------- case (e): 'local' on photos[0] ----------
+  it('(e) local on photos[0]: pending avatar deleted, avatars/contacts unchanged', async () => {
+    const db = await freshDb('factory-rc-e')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const cid = '01RCTEST0000000000000000E0'
+    const rn = 'people/rc-e'
+    const now = new Date().toISOString()
+
+    const conflictId = await seedConflict(db, {
+      dbName: 'factory-rc-e',
+      contactId: cid,
+      googleResourceName: rn,
+      fieldPath: 'photos[0]',
+      baseValueJson: JSON.stringify('hash-base'),
+      googleValueJson: JSON.stringify('hash-google'),
+      localValueJson: JSON.stringify('hash-local'),
+      contactExtra: { avatar_hash: 'hash-local' },
+      snapshotPayload: { photoContentHash: 'hash-base' },
+    })
+
+    await db.execute(
+      `INSERT INTO pending_google_avatars (contact_id, mime, blob, hash, fetched_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [cid, 'image/jpeg', new Uint8Array([4, 5, 6]), 'hash-google', now],
+    )
+
+    await runtime.resolveConflict(conflictId, 'local')
+
+    // pending deleted
+    const pending = await db.select('SELECT * FROM pending_google_avatars WHERE contact_id = ?', [
+      cid,
+    ])
+    expect(pending).toHaveLength(0)
+
+    // avatars unchanged (no row inserted)
+    const avatars = await db.select('SELECT * FROM avatars WHERE contact_id = ?', [cid])
+    expect(avatars).toHaveLength(0)
+
+    // contacts.avatar_hash unchanged
+    const contacts = await db.select<{ avatar_hash: string | null }>(
+      'SELECT avatar_hash FROM contacts WHERE id = ?',
+      [cid],
+    )
+    expect(contacts[0]?.avatar_hash).toBe('hash-local')
+
+    // snapshot photoContentHash advanced to local hash
+    const snaps = await db.select<{ payload_json: string }>(
+      'SELECT payload_json FROM google_contact_snapshots WHERE google_resource_name = ?',
+      [rn],
+    )
+    const payload = JSON.parse(snaps[0]!.payload_json) as Record<string, unknown>
+    expect(payload['photoContentHash']).toBe('hash-local')
+
+    await db.close()
+  })
+
+  // ---------- case (f): '__deletion__' + 'google' ----------
+  it('(f) __deletion__ + google: contact row deleted', async () => {
+    const db = await freshDb('factory-rc-f')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const cid = '01RCTEST0000000000000000F0'
+    const rn = 'people/rc-f'
+
+    const conflictId = await seedConflict(db, {
+      dbName: 'factory-rc-f',
+      contactId: cid,
+      googleResourceName: rn,
+      fieldPath: '__deletion__',
+      baseValueJson: JSON.stringify({}),
+      googleValueJson: null,
+      localValueJson: JSON.stringify({ googleResourceName: rn }),
+      snapshotPayload: {},
+    })
+
+    await runtime.resolveConflict(conflictId, 'google')
+
+    // Contact row gone (CASCADE may also remove conflict row)
+    const contacts = await db.select('SELECT * FROM contacts WHERE id = ?', [cid])
+    expect(contacts).toHaveLength(0)
+
+    // Log event created
+    const logs = await db.select<{ payload_json: string }>(
+      `SELECT payload_json FROM google_contacts_sync_log WHERE event = 'conflict_resolved'`,
+    )
+    expect(logs.length).toBeGreaterThan(0)
+    const logPayload = JSON.parse(logs[0]!.payload_json) as Record<string, unknown>
+    expect(logPayload['field_path']).toBe('__deletion__')
+
+    await db.close()
+  })
+
+  // ---------- case (g): '__deletion__' + 'local' ----------
+  it('(g) __deletion__ + local: contact kept, google fields nulled, snapshot deleted', async () => {
+    const db = await freshDb('factory-rc-g')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const cid = '01RCTEST0000000000000000G0'
+    const rn = 'people/rc-g'
+
+    const conflictId = await seedConflict(db, {
+      dbName: 'factory-rc-g',
+      contactId: cid,
+      googleResourceName: rn,
+      fieldPath: '__deletion__',
+      baseValueJson: JSON.stringify({}),
+      googleValueJson: null,
+      localValueJson: JSON.stringify({ googleResourceName: rn }),
+      snapshotPayload: {},
+    })
+
+    await runtime.resolveConflict(conflictId, 'local')
+
+    // Contact row still exists
+    const contacts = await db.select<{
+      id: string
+      google_resource_name: string | null
+      google_etag: string | null
+    }>('SELECT id, google_resource_name, google_etag FROM contacts WHERE id = ?', [cid])
+    expect(contacts).toHaveLength(1)
+    expect(contacts[0]?.google_resource_name).toBeNull()
+    expect(contacts[0]?.google_etag).toBeNull()
+
+    // Snapshot deleted
+    const snaps = await db.select(
+      'SELECT * FROM google_contact_snapshots WHERE google_resource_name = ?',
+      [rn],
+    )
+    expect(snaps).toHaveLength(0)
+
+    // Conflict resolved
+    const conflicts = await db.select<{ status: string }>(
+      'SELECT status FROM sync_conflicts WHERE id = ?',
+      [conflictId],
+    )
+    expect(conflicts[0]?.status).toBe('resolved')
+
+    await db.close()
+  })
+
+  // ---------- case (h): 'google' on phones[<key>] ----------
+  it('(h) google on phones[key]: contacts.phones updated, snapshot.phones updated', async () => {
+    const db = await freshDb('factory-rc-h')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const cid = '01RCTEST0000000000000000H0'
+    const rn = 'people/rc-h'
+    const phoneKey = '+15550000001'
+    const localPhone = { value: '+15550000001', type: 'mobile', label: 'old' }
+    const googlePhone = { value: '+15550000001', type: 'work', label: 'new' }
+    const localArr = [localPhone]
+    const snapshotArr = [{ value: '+15550000001', type: 'home' }]
+
+    const conflictId = await seedConflict(db, {
+      dbName: 'factory-rc-h',
+      contactId: cid,
+      googleResourceName: rn,
+      fieldPath: `phones[${phoneKey}]:diverged`,
+      baseValueJson: JSON.stringify({ value: '+15550000001', type: 'home' }),
+      googleValueJson: JSON.stringify(googlePhone),
+      localValueJson: JSON.stringify(localPhone),
+      contactExtra: { phones: JSON.stringify(localArr) },
+      snapshotPayload: { phones: snapshotArr },
+    })
+
+    await runtime.resolveConflict(conflictId, 'google')
+
+    // contacts.phones updated to Google version
+    const contacts = await db.select<{ phones: string }>(
+      'SELECT phones FROM contacts WHERE id = ?',
+      [cid],
+    )
+    const contactPhones = JSON.parse(contacts[0]!.phones) as typeof localArr
+    expect(contactPhones).toHaveLength(1)
+    expect(contactPhones[0]).toMatchObject({ value: '+15550000001', type: 'work' })
+
+    // snapshot.phones updated
+    const snaps = await db.select<{ payload_json: string }>(
+      'SELECT payload_json FROM google_contact_snapshots WHERE google_resource_name = ?',
+      [rn],
+    )
+    const snapshotPayload = JSON.parse(snaps[0]!.payload_json) as Record<string, unknown>
+    const snapPhones = snapshotPayload['phones'] as typeof localArr
+    expect(snapPhones[0]).toMatchObject({ type: 'work' })
+
+    await db.close()
+  })
+
+  // ---------- case (i): 'local' on phones[key]:deleted_remotely ----------
+  it('(i) local on phones[key]:deleted_remotely: contacts unchanged, snapshot has local element', async () => {
+    const db = await freshDb('factory-rc-i')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const cid = '01RCTEST0000000000000000I0'
+    const rn = 'people/rc-i'
+    const phoneKey = '+15550000002'
+    const localPhone = { value: '+15550000002', type: 'mobile', label: 'keep me' }
+    const localArr = [localPhone]
+    // Snapshot does NOT have the element (remote deleted it).
+    const snapshotArr: unknown[] = []
+
+    const conflictId = await seedConflict(db, {
+      dbName: 'factory-rc-i',
+      contactId: cid,
+      googleResourceName: rn,
+      fieldPath: `phones[${phoneKey}]:deleted_remotely`,
+      baseValueJson: JSON.stringify({ value: '+15550000002', type: 'mobile' }),
+      googleValueJson: null,
+      localValueJson: JSON.stringify(localPhone),
+      contactExtra: { phones: JSON.stringify(localArr) },
+      snapshotPayload: { phones: snapshotArr },
+    })
+
+    await runtime.resolveConflict(conflictId, 'local')
+
+    // contacts.phones unchanged
+    const contacts = await db.select<{ phones: string }>(
+      'SELECT phones FROM contacts WHERE id = ?',
+      [cid],
+    )
+    const contactPhones = JSON.parse(contacts[0]!.phones) as typeof localArr
+    expect(contactPhones).toHaveLength(1)
+    expect(contactPhones[0]).toMatchObject({ value: '+15550000002' })
+
+    // snapshot.phones now contains the local element (so future pull won't re-conflict)
+    const snaps = await db.select<{ payload_json: string }>(
+      'SELECT payload_json FROM google_contact_snapshots WHERE google_resource_name = ?',
+      [rn],
+    )
+    const snapshotPayload = JSON.parse(snaps[0]!.payload_json) as Record<string, unknown>
+    const snapPhones = snapshotPayload['phones'] as typeof localArr
+    const found = snapPhones.find((p) => p.value === '+15550000002')
+    expect(found).toBeDefined()
+
+    await db.close()
+  })
+
+  // ---------- case (j): atomicity rollback ----------
+  it('(j) atomicity: error during resolution rolls back all mutations', async () => {
+    const db = await freshDb('factory-rc-j')
+    const tokenStore = makeMemoryTokenStore()
+    // Use an invalid resolution to trigger a throw inside the transaction.
+    // We'll trigger it by calling resolveConflict with a fieldPath that resolves
+    // to an unknown column, exercising the error path inside the transaction.
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const cid = '01RCTEST0000000000000000J0'
+    const rn = 'people/rc-j'
+
+    const conflictId = await seedConflict(db, {
+      dbName: 'factory-rc-j',
+      contactId: cid,
+      googleResourceName: rn,
+      fieldPath: '__unknownField__',
+      baseValueJson: JSON.stringify('base'),
+      googleValueJson: JSON.stringify('google'),
+      localValueJson: JSON.stringify('local'),
+      contactExtra: {},
+      snapshotPayload: {},
+    })
+
+    // Should throw due to unknown fieldPath
+    await expect(runtime.resolveConflict(conflictId, 'google')).rejects.toThrow()
+
+    // Conflict row must remain 'pending' (rollback)
+    const conflicts = await db.select<{ status: string }>(
+      'SELECT status FROM sync_conflicts WHERE id = ?',
+      [conflictId],
+    )
+    expect(conflicts[0]?.status).toBe('pending')
+
+    // No conflict_resolved log entry
+    const logs = await db.select(
+      `SELECT * FROM google_contacts_sync_log WHERE event = 'conflict_resolved'`,
+    )
+    expect(logs).toHaveLength(0)
+
     await db.close()
   })
 })
