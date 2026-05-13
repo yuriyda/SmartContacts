@@ -319,3 +319,113 @@ describe('fetchAll', () => {
     expect(client.listContactGroups).toHaveBeenCalledTimes(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Photo download integration
+// ---------------------------------------------------------------------------
+
+describe('fetchAll: photo download', () => {
+  const PHOTO_RUN_ID = 'run-photo-test-001'
+  const PHOTO_URL = 'https://lh3.googleusercontent.com/photo.jpg'
+  const PHOTO_BYTES = new Uint8Array([0x01, 0x02, 0x03])
+
+  function makePersonWithPhoto(id: string, photoUrl: string): Person {
+    return {
+      resourceName: `people/${id}`,
+      etag: `etag-${id}`,
+      photos: [{ url: photoUrl, default: true }],
+    }
+  }
+
+  function makeMockFetch(bytes: Uint8Array, status = 200): typeof fetch {
+    return vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(bytes)
+            c.close()
+          },
+        }),
+        {
+          status,
+          headers: new Headers({ 'content-type': 'image/jpeg' }),
+        },
+      ),
+    ) as typeof fetch
+  }
+
+  it('(j) person with photoUrl → normalizedPersons entry has photoBytes and photoContentHash', async () => {
+    const person = makePersonWithPhoto('photo-1', PHOTO_URL)
+    const client = makeClient(
+      async () => ({ connections: [person], nextSyncToken: 'tok' }),
+      async () => ({ contactGroups: [] }),
+    )
+    const logger = makeLogger()
+    const mockFetch = makeMockFetch(PHOTO_BYTES)
+
+    const result = await fetchAll({
+      client,
+      syncToken: null,
+      runId: PHOTO_RUN_ID,
+      logger,
+      fetchImpl: mockFetch,
+    } as unknown as FetchAllDeps)
+
+    expect(result.normalizedPersons).toHaveLength(1)
+    const nc = result.normalizedPersons[0]!
+    expect(nc.photoBytes).toBeInstanceOf(Uint8Array)
+    expect(nc.photoMime).toBe('image/jpeg')
+    expect(nc.photoContentHash).toBeTruthy()
+    expect(typeof nc.photoContentHash).toBe('string')
+    expect(nc.photoContentHash!.length).toBe(64) // SHA-256 hex = 64 chars
+  })
+
+  it('(k) person without photo → normalizedPersons entry has no photoBytes', async () => {
+    const person = makePerson('no-photo')
+    const client = makeClient(
+      async () => ({ connections: [person], nextSyncToken: 'tok' }),
+      async () => ({ contactGroups: [] }),
+    )
+    const logger = makeLogger()
+    const mockFetch = vi.fn() as typeof fetch
+
+    const result = await fetchAll({
+      client,
+      syncToken: null,
+      runId: PHOTO_RUN_ID,
+      logger,
+      fetchImpl: mockFetch,
+    } as unknown as FetchAllDeps)
+
+    expect(result.normalizedPersons[0]?.photoBytes).toBeUndefined()
+    expect(mockFetch).not.toHaveBeenCalled()
+  })
+
+  it('(l) photo download failure → logs photo_download_failed; sync continues; photoBytes undefined', async () => {
+    const person = makePersonWithPhoto('photo-fail', PHOTO_URL)
+    const client = makeClient(
+      async () => ({ connections: [person], nextSyncToken: 'tok' }),
+      async () => ({ contactGroups: [] }),
+    )
+    const logger = makeLogger()
+    // Simulate network failure.
+    const mockFetch = vi.fn().mockRejectedValue(new TypeError('network failure')) as typeof fetch
+
+    const result = await fetchAll({
+      client,
+      syncToken: null,
+      runId: PHOTO_RUN_ID,
+      logger,
+      fetchImpl: mockFetch,
+    } as unknown as FetchAllDeps)
+
+    // Sync must continue — result is returned.
+    expect(result.normalizedPersons).toHaveLength(1)
+    expect(result.normalizedPersons[0]?.photoBytes).toBeUndefined()
+
+    // photo_download_failed event must be logged.
+    const failLog = logger.calls.find((c) => c.event === 'photo_download_failed')
+    expect(failLog).toBeDefined()
+    expect(failLog?.level).toBe('warn')
+  })
+})

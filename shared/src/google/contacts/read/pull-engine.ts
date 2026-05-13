@@ -18,7 +18,6 @@ import type { Applier } from './applier'
 import type { SnapshotRepo } from './snapshot-repo'
 import type { SyncLogRepo } from './sync-log-repo'
 import type { NormalizedContact } from './types'
-import { personToNormalized } from './mapper'
 import type { Person, ContactGroup } from './types'
 import type { GoogleLabelRow } from './label-repo'
 
@@ -64,6 +63,8 @@ export interface PullEngineDeps {
   }
   now: () => Date
   generateRunId: () => string
+  /** Optional fetch override for photo download (passed through to fetcher). */
+  fetchImpl?: typeof fetch
 }
 
 // ---------------------------------------------------------------------------
@@ -136,12 +137,14 @@ export class PullEngine {
         syncToken,
         runId,
         logger: this.deps.syncLogRepo,
+        ...(this.deps.fetchImpl !== undefined ? { fetchImpl: this.deps.fetchImpl } : {}),
       })
 
       const nowIso = now.toISOString()
 
-      // --- Step 4: Map persons → NormalizedContact[] ---
-      const theirs: NormalizedContact[] = fetchResult.persons.map((p) => personToNormalized(p))
+      // --- Step 4: Use pre-normalized persons from fetcher (includes photo bytes) ---
+      // The fetcher runs personToNormalized + photo download in one pass.
+      const theirs: NormalizedContact[] = fetchResult.normalizedPersons
       const deletedRemotely: string[] = fetchResult.deletedResourceNames
 
       // --- Step 5: Load ours + snapshots ---

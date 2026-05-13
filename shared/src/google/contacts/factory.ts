@@ -269,6 +269,7 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
     lastSyncTokenStore,
     now,
     generateRunId,
+    ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
   })
 
   // --- Public methods ---

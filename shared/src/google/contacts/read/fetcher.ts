@@ -4,6 +4,10 @@
 // for a single sync run. Handles syncToken-based incremental sync, deletion markers,
 // and automatic recovery from HTTP 410 (token expiry) with a single retry.
 //
+// Photo download: after fetching all persons, downloads the primary photo for
+// each person that has a photo URL. Uses downloadPhoto() (not googleApiFetch).
+// Failures are logged as 'photo_download_failed' and do NOT abort the sync.
+//
 // Rules:
 //  - No `any` types.
 //  - Do NOT add write methods or import DB adapters directly.
@@ -12,6 +16,9 @@
 
 import type { GoogleContactsClient } from './client'
 import type { Person, ContactGroup } from './types'
+import type { NormalizedContact } from './types'
+import { personToNormalized } from './mapper'
+import { downloadPhoto } from './photo-fetch'
 import type { SyncLogRepo } from './sync-log-repo'
 
 // ---------------------------------------------------------------------------
@@ -21,6 +28,11 @@ import type { SyncLogRepo } from './sync-log-repo'
 export interface FetchResult {
   /** All non-deleted persons fetched this run. */
   persons: Person[]
+  /**
+   * Normalized contacts with photo transport fields (photoBytes/photoMime/photoContentHash)
+   * populated for persons that have photos. Keys match persons[] by resourceName.
+   */
+  normalizedPersons: NormalizedContact[]
   /** Resource names from connections with metadata.deleted === true (incremental sync only). */
   deletedResourceNames: string[]
   /** All contact groups fetched this run. */
@@ -34,6 +46,8 @@ export interface FetchAllDeps {
   syncToken: string | null
   runId: string
   logger: SyncLogRepo
+  /** Optional fetch override for photo download (and unit tests). */
+  fetchImpl?: typeof fetch
   /** Default: 100 */
   pageSize?: number
 }
@@ -187,10 +201,70 @@ export async function fetchAll(deps: FetchAllDeps): Promise<FetchResult> {
 
   const labels = await fetchAllLabels(deps.client, pageSize)
 
+  // Download photos for all persons that have a photo URL.
+  // Failures are non-fatal: logged as 'photo_download_failed'; sync continues.
+  const normalizedPersons = await downloadPersonPhotos(
+    connectionsResult.persons,
+    deps.runId,
+    logger,
+    deps.fetchImpl,
+  )
+
   return {
     persons: connectionsResult.persons,
+    normalizedPersons,
     deletedResourceNames: connectionsResult.deletedResourceNames,
     labels,
     nextSyncToken: connectionsResult.nextSyncToken,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Photo download pass
+// ---------------------------------------------------------------------------
+
+/**
+ * For each Person, maps to a NormalizedContact and downloads its primary photo.
+ * Populates photoBytes / photoMime / photoContentHash on the NormalizedContact.
+ * On failure (timeout, host not allowed, size limit, network): logs 'photo_download_failed'
+ * and leaves photoBytes/photoMime/photoContentHash as the mapper defaults (null/undefined).
+ */
+async function downloadPersonPhotos(
+  persons: Person[],
+  runId: string,
+  logger: SyncLogRepo,
+  fetchImpl?: typeof fetch,
+): Promise<NormalizedContact[]> {
+  const effectiveFetch = fetchImpl ?? globalThis.fetch
+  const results: NormalizedContact[] = []
+
+  for (const person of persons) {
+    const normalized = personToNormalized(person)
+
+    if (normalized.photoUrl !== null) {
+      try {
+        const { bytes, mime, hash } = await downloadPhoto(normalized.photoUrl, effectiveFetch)
+        normalized.photoBytes = bytes
+        normalized.photoMime = mime
+        normalized.photoContentHash = hash
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        await logger.append({
+          runId,
+          event: 'photo_download_failed',
+          level: 'warn',
+          payload: {
+            googleResourceName: person.resourceName,
+            photoUrl: normalized.photoUrl,
+            error: message,
+          },
+        })
+        // Leave photoBytes/photoMime undefined and photoContentHash null (mapper defaults).
+      }
+    }
+
+    results.push(normalized)
+  }
+
+  return results
 }

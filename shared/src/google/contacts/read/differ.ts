@@ -746,8 +746,10 @@ export function computeChangeset(input: ComputeChangesetInput): Changeset {
       )
       cleanUpdates.push(...cu)
       conflicts.push(...cf)
-      // Record theirs for applier snapshot upsert (only if there are actual updates)
-      if (cu.length > 0) {
+      // Record theirs for applier snapshot upsert and photo-bytes access.
+      // Populate when there are cleanUpdates OR conflicts (applier needs photo bytes
+      // from theirsContact to write pending_google_avatars for photo conflicts).
+      if (cu.length > 0 || cf.length > 0) {
         updatedNormalized.set(rn, theirsContact)
       }
     }

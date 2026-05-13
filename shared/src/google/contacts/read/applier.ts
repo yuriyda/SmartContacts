@@ -23,6 +23,7 @@ import { ConflictRepo } from './conflict-repo'
 import type { NewConflict } from './conflict-repo'
 import type { SyncLogRepo } from './sync-log-repo'
 import type { NormalizedContact } from './types'
+import { stripPhotoTransport } from './types'
 import type { Changeset, FieldUpdate } from './differ'
 
 // ---------------------------------------------------------------------------
@@ -320,13 +321,34 @@ export class Applier {
           const row = normalizedToContactRow(id, normalized, now, 0, GOOGLE_DEVICE_ID)
           await tx.execute(CONTACT_UPSERT_SQL, contactParams(row))
 
-          // Insert snapshot
+          // Write avatar bytes to avatars table if photo was downloaded.
+          if (normalized.photoBytes !== undefined) {
+            await tx.execute(
+              `INSERT INTO avatars (contact_id, blob, mime, source_url, fetched_at, hash)
+               VALUES (?, ?, ?, NULL, ?, ?)
+               ON CONFLICT(contact_id) DO UPDATE
+               SET blob = excluded.blob,
+                   mime = excluded.mime,
+                   source_url = NULL,
+                   fetched_at = excluded.fetched_at,
+                   hash = excluded.hash`,
+              [
+                id,
+                normalized.photoBytes,
+                normalized.photoMime ?? 'image/jpeg',
+                now,
+                normalized.photoContentHash,
+              ],
+            )
+          }
+
+          // Insert snapshot — strip transport-only photo bytes before serializing.
           const snapshotRepo = new SnapshotRepo(tx)
           await snapshotRepo.upsert({
             googleResourceName: normalized.googleResourceName,
             etag: normalized.etag,
             updateTime: normalized.updateTime,
-            payloadJson: JSON.stringify(normalized),
+            payloadJson: JSON.stringify(stripPhotoTransport(normalized)),
             lastSyncedAt: now,
           })
 
@@ -380,12 +402,32 @@ export class Applier {
           // Upsert snapshot with latest normalized data (from updatedNormalized map)
           const normalized = changeset.updatedNormalized.get(googleResourceName)
           if (normalized !== undefined) {
+            // Write avatar bytes if a new photo was downloaded for this update.
+            if (normalized.photoBytes !== undefined) {
+              await tx.execute(
+                `INSERT INTO avatars (contact_id, blob, mime, source_url, fetched_at, hash)
+                 VALUES (?, ?, ?, NULL, ?, ?)
+                 ON CONFLICT(contact_id) DO UPDATE
+                 SET blob = excluded.blob,
+                     mime = excluded.mime,
+                     source_url = NULL,
+                     fetched_at = excluded.fetched_at,
+                     hash = excluded.hash`,
+                [
+                  localId,
+                  normalized.photoBytes,
+                  normalized.photoMime ?? 'image/jpeg',
+                  now,
+                  normalized.photoContentHash,
+                ],
+              )
+            }
             const snapshotRepo = new SnapshotRepo(tx)
             await snapshotRepo.upsert({
               googleResourceName,
               etag: normalized.etag,
               updateTime: normalized.updateTime,
-              payloadJson: JSON.stringify(normalized),
+              payloadJson: JSON.stringify(stripPhotoTransport(normalized)),
               lastSyncedAt: now,
             })
           }
@@ -395,6 +437,14 @@ export class Applier {
 
         // -- (c) cleanDeletes: delete contact rows (CASCADE handles related tables) --
         for (const resourceName of changeset.cleanDeletes) {
+          // Resolve to local contact_id for explicit avatar deletion (avatars table has no FK CASCADE).
+          const localId = idByResourceName.get(resourceName)
+          if (localId !== undefined) {
+            // avatars table has no ON DELETE CASCADE — delete explicitly.
+            await tx.execute('DELETE FROM avatars WHERE contact_id = ?', [localId])
+            // pending_google_avatars has ON DELETE CASCADE but delete explicitly for safety.
+            await tx.execute('DELETE FROM pending_google_avatars WHERE contact_id = ?', [localId])
+          }
           await tx.execute('DELETE FROM contacts WHERE google_resource_name = ?', [resourceName])
           // Also explicitly delete snapshot (in case FK CASCADE not enabled)
           await tx.execute('DELETE FROM google_contact_snapshots WHERE google_resource_name = ?', [
@@ -421,6 +471,31 @@ export class Applier {
             localValueJson: c.localValueJson,
             detectedAt: c.detectedAt,
           })
+
+          // For photo conflicts: write Google's photo bytes to pending_google_avatars.
+          // The resolveConflict('google') path in factory.ts reads from this table.
+          // avatars row is left untouched — local photo wins until user resolves.
+          if (c.fieldPath === 'photos[0]') {
+            const googleNormalized = changeset.updatedNormalized.get(c.googleResourceName)
+            if (googleNormalized?.photoBytes !== undefined) {
+              await tx.execute(
+                `INSERT INTO pending_google_avatars (contact_id, blob, mime, hash, fetched_at)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON CONFLICT(contact_id) DO UPDATE
+                 SET blob = excluded.blob,
+                     mime = excluded.mime,
+                     hash = excluded.hash,
+                     fetched_at = excluded.fetched_at`,
+                [
+                  localId,
+                  googleNormalized.photoBytes,
+                  googleNormalized.photoMime ?? 'image/jpeg',
+                  googleNormalized.photoContentHash,
+                  now,
+                ],
+              )
+            }
+          }
         }
         await conflictRepo.insertPending(pendingRows)
         conflictCount = pendingRows.length

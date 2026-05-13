@@ -314,11 +314,39 @@ export interface NormalizedContact {
   locale?: string | undefined
   gender?: string | undefined
   occupation?: string | undefined
-  // Photo
+  // Photo (persistent fields)
   photoUrl: string | null
   photoContentHash: string | null
+  /**
+   * Raw photo bytes from Google CDN — populated by the fetcher after downloading.
+   * TRANSPORT-ONLY: must be stripped before JSON.stringify / snapshot storage.
+   * Use stripPhotoTransport() before writing to payloadJson.
+   */
+  photoBytes?: Uint8Array | undefined
+  /**
+   * MIME type of the downloaded photo — transport-only, paired with photoBytes.
+   * TRANSPORT-ONLY: must be stripped before JSON.stringify / snapshot storage.
+   */
+  photoMime?: string | undefined
   // Google labels (INV-4: read-only namespace, never merged into local tags)
   labelResourceNames: string[]
+}
+
+// ---------------------------------------------------------------------------
+// Transport-stripping helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a copy of a NormalizedContact with transport-only photo fields removed.
+ * Call this before JSON.stringify / snapshot upsert to avoid serialising raw bytes.
+ *
+ * The returned object is a shallow copy; all persistent fields reference the same values.
+ */
+export function stripPhotoTransport(c: NormalizedContact): NormalizedContact {
+  // Destructure to omit transport fields; spread the rest.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { photoBytes: _pb, photoMime: _pm, ...rest } = c
+  return rest
 }
 
 // ---------------------------------------------------------------------------

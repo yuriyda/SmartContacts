@@ -512,3 +512,263 @@ describe('Applier: idempotent re-apply of same cleanInsert Changeset', () => {
     expect(forResource).toHaveLength(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// (h) Photo pipeline: cleanInsert with photoBytes → avatars written; snapshot slim
+// ---------------------------------------------------------------------------
+
+describe('Applier: cleanInsert with photoBytes writes avatars and strips bytes from snapshot', () => {
+  let db: DbAdapter
+  let contactId: string
+  const PHOTO_BYTES = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+  const PHOTO_HASH = 'photo-hash-abc123'
+  const PHOTO_MIME = 'image/jpeg'
+
+  beforeAll(async () => {
+    db = await freshDb()
+    const applier = makeApplier(db)
+    const normalized = makeNormalized({
+      googleResourceName: 'people/photo-insert-1',
+      givenName: 'PhotoBob',
+      photoUrl: 'https://lh3.googleusercontent.com/photo.jpg',
+      photoContentHash: PHOTO_HASH,
+      photoBytes: PHOTO_BYTES,
+      photoMime: PHOTO_MIME,
+    })
+    const changeset: Changeset = {
+      ...emptyChangeset('run-photo-insert'),
+      cleanInserts: [normalized],
+    }
+    await applier.apply(changeset)
+
+    const rows = await db.select<{ id: string }>(
+      'SELECT id FROM contacts WHERE google_resource_name = ?',
+      ['people/photo-insert-1'],
+    )
+    contactId = rows[0]!.id
+  })
+
+  it('contacts.avatar_hash is set to photo hash', async () => {
+    const rows = await db.select<{ avatar_hash: string }>(
+      'SELECT avatar_hash FROM contacts WHERE id = ?',
+      [contactId],
+    )
+    expect(rows[0]!.avatar_hash).toBe(PHOTO_HASH)
+  })
+
+  it('avatars table has the photo bytes and mime', async () => {
+    const rows = await db.select<{ blob: Uint8Array; mime: string; hash: string }>(
+      'SELECT blob, mime, hash FROM avatars WHERE contact_id = ?',
+      [contactId],
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.mime).toBe(PHOTO_MIME)
+    expect(rows[0]!.hash).toBe(PHOTO_HASH)
+    // blob is stored; length should match.
+    expect(rows[0]!.blob).toBeTruthy()
+  })
+
+  it('snapshot payload_json does NOT contain photoBytes', async () => {
+    const snap = await new SnapshotRepo(db).get('people/photo-insert-1')
+    expect(snap).not.toBeNull()
+    const payload = JSON.parse(snap!.payloadJson) as Record<string, unknown>
+    // photoBytes must not be serialized (transport-only).
+    expect(payload['photoBytes']).toBeUndefined()
+    expect(payload['photoMime']).toBeUndefined()
+    // photoContentHash IS stored (not transport).
+    expect(payload['photoContentHash']).toBe(PHOTO_HASH)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (i) Photo pipeline: cleanUpdate where photo changed → avatars updated
+// ---------------------------------------------------------------------------
+
+describe('Applier: cleanUpdate with photo change updates avatars table', () => {
+  let db: DbAdapter
+  let contactId: string
+  const NEW_HASH = 'new-photo-hash-xyz'
+  const NEW_BYTES = new Uint8Array([0x01, 0x02])
+
+  beforeAll(async () => {
+    db = await freshDb()
+    contactId = await seedContact(db, 'people/photo-update-1')
+    // Seed initial avatar.
+    await db.execute(
+      'INSERT INTO avatars (contact_id, blob, mime, source_url, fetched_at, hash) VALUES (?, ?, ?, NULL, ?, ?)',
+      [contactId, new Uint8Array([0xff]), 'image/png', new Date().toISOString(), 'old-hash'],
+    )
+    await new SnapshotRepo(db).upsert({
+      googleResourceName: 'people/photo-update-1',
+      etag: 'old-etag',
+      updateTime: '2026-05-01T00:00:00Z',
+      payloadJson: JSON.stringify(
+        makeNormalized({
+          googleResourceName: 'people/photo-update-1',
+          photoContentHash: 'old-hash',
+        }),
+      ),
+      lastSyncedAt: '2026-05-01T00:00:00Z',
+    })
+
+    const applier = makeApplier(db)
+    const normalized = makeNormalized({
+      googleResourceName: 'people/photo-update-1',
+      etag: 'new-etag',
+      updateTime: '2026-05-10T00:00:00Z',
+      photoUrl: 'https://lh3.googleusercontent.com/new.jpg',
+      photoContentHash: NEW_HASH,
+      photoBytes: NEW_BYTES,
+      photoMime: 'image/webp',
+    })
+    const fieldUpdate: FieldUpdate = {
+      contactId,
+      googleResourceName: 'people/photo-update-1',
+      fieldPath: 'photos[0]',
+      newValue: 'https://lh3.googleusercontent.com/new.jpg',
+    }
+    const changeset: Changeset = {
+      ...emptyChangeset('run-photo-update'),
+      cleanUpdates: [fieldUpdate],
+      updatedNormalized: new Map([['people/photo-update-1', normalized]]),
+      counts: { inserts: 0, updates: 1, deletes: 0, conflicts: 0 },
+    }
+    await applier.apply(changeset)
+  })
+
+  it('avatars.hash is updated to new hash', async () => {
+    const rows = await db.select<{ hash: string }>(
+      'SELECT hash FROM avatars WHERE contact_id = ?',
+      [contactId],
+    )
+    expect(rows[0]!.hash).toBe(NEW_HASH)
+  })
+
+  it('avatars.mime is updated', async () => {
+    const rows = await db.select<{ mime: string }>(
+      'SELECT mime FROM avatars WHERE contact_id = ?',
+      [contactId],
+    )
+    expect(rows[0]!.mime).toBe('image/webp')
+  })
+
+  it('snapshot does not contain photoBytes', async () => {
+    const snap = await new SnapshotRepo(db).get('people/photo-update-1')
+    const payload = JSON.parse(snap!.payloadJson) as Record<string, unknown>
+    expect(payload['photoBytes']).toBeUndefined()
+    expect(payload['photoContentHash']).toBe(NEW_HASH)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (j) Photo conflict: pending_google_avatars written; existing avatars unchanged
+// ---------------------------------------------------------------------------
+
+describe('Applier: photo conflict writes pending_google_avatars; avatars unchanged', () => {
+  let db: DbAdapter
+  let contactId: string
+  const LOCAL_HASH = 'local-hash'
+  const GOOGLE_HASH = 'google-hash-conflict'
+  const GOOGLE_BYTES = new Uint8Array([0x11, 0x22, 0x33])
+
+  beforeAll(async () => {
+    db = await freshDb()
+    contactId = await seedContact(db, 'people/photo-conflict-1')
+    // Seed existing local avatar.
+    await db.execute(
+      'INSERT INTO avatars (contact_id, blob, mime, source_url, fetched_at, hash) VALUES (?, ?, ?, NULL, ?, ?)',
+      [contactId, new Uint8Array([0xaa, 0xbb]), 'image/jpeg', new Date().toISOString(), LOCAL_HASH],
+    )
+
+    const applier = makeApplier(db)
+    const googleNormalized = makeNormalized({
+      googleResourceName: 'people/photo-conflict-1',
+      photoUrl: 'https://lh3.googleusercontent.com/conflict.jpg',
+      photoContentHash: GOOGLE_HASH,
+      photoBytes: GOOGLE_BYTES,
+      photoMime: 'image/png',
+    })
+    const conflict: ConflictRecord = {
+      contactId,
+      googleResourceName: 'people/photo-conflict-1',
+      fieldPath: 'photos[0]',
+      baseValueJson: JSON.stringify('base-hash'),
+      googleValueJson: JSON.stringify(GOOGLE_HASH),
+      localValueJson: JSON.stringify(LOCAL_HASH),
+      detectedAt: new Date().toISOString(),
+    }
+    const changeset: Changeset = {
+      ...emptyChangeset('run-photo-conflict'),
+      conflicts: [conflict],
+      updatedNormalized: new Map([['people/photo-conflict-1', googleNormalized]]),
+    }
+    await applier.apply(changeset)
+  })
+
+  it('pending_google_avatars has the Google photo bytes', async () => {
+    const rows = await db.select<{ hash: string; mime: string }>(
+      'SELECT hash, mime FROM pending_google_avatars WHERE contact_id = ?',
+      [contactId],
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.hash).toBe(GOOGLE_HASH)
+    expect(rows[0]!.mime).toBe('image/png')
+  })
+
+  it('existing avatars row is unchanged (local photo preserved)', async () => {
+    const rows = await db.select<{ hash: string }>(
+      'SELECT hash FROM avatars WHERE contact_id = ?',
+      [contactId],
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.hash).toBe(LOCAL_HASH)
+  })
+
+  it('sync_conflicts has a pending row for photos[0]', async () => {
+    const pending = await new ConflictRepo(db).listPending({ contactId })
+    const photoCf = pending.find((c) => c.fieldPath === 'photos[0]')
+    expect(photoCf).toBeDefined()
+    expect(photoCf!.googleValueJson).toBe(JSON.stringify(GOOGLE_HASH))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (k) cleanDelete with avatar: avatars row is deleted explicitly
+// ---------------------------------------------------------------------------
+
+describe('Applier: cleanDelete removes avatars row (no FK cascade on avatars)', () => {
+  let db: DbAdapter
+  let contactId: string
+
+  beforeAll(async () => {
+    db = await freshDb()
+    await db.execute('PRAGMA foreign_keys = ON')
+    contactId = await seedContact(db, 'people/delete-photo-1')
+    await db.execute(
+      'INSERT INTO avatars (contact_id, blob, mime, source_url, fetched_at, hash) VALUES (?, ?, ?, NULL, ?, ?)',
+      [contactId, new Uint8Array([0x01]), 'image/jpeg', new Date().toISOString(), 'hash-del'],
+    )
+    await new SnapshotRepo(db).upsert({
+      googleResourceName: 'people/delete-photo-1',
+      etag: 'e',
+      updateTime: '2026-05-01T00:00:00Z',
+      payloadJson: '{}',
+      lastSyncedAt: '2026-05-01T00:00:00Z',
+    })
+
+    const applier = makeApplier(db)
+    const changeset: Changeset = {
+      ...emptyChangeset('run-delete-photo'),
+      cleanDeletes: ['people/delete-photo-1'],
+    }
+    await applier.apply(changeset)
+  })
+
+  it('avatars row is deleted', async () => {
+    const rows = await db.select<{ contact_id: string }>(
+      'SELECT contact_id FROM avatars WHERE contact_id = ?',
+      [contactId],
+    )
+    expect(rows).toHaveLength(0)
+  })
+})
