@@ -334,7 +334,9 @@ describe('fetchAll: photo download', () => {
     return {
       resourceName: `people/${id}`,
       etag: `etag-${id}`,
-      photos: [{ url: photoUrl, default: true }],
+      // default: false marks a user-uploaded photo (the mapper now skips
+      // default-true entries, which are Google's gray placeholder).
+      photos: [{ url: photoUrl, default: false }],
     }
   }
 
@@ -418,6 +420,8 @@ describe('fetchAll: photo download', () => {
       runId: PHOTO_RUN_ID,
       logger,
       fetchImpl: mockFetch,
+      photoThrottleMs: 0,
+      photoSleepFn: vi.fn().mockResolvedValue(undefined),
     } as unknown as FetchAllDeps)
 
     // Sync must continue — result is returned.

@@ -171,9 +171,13 @@ export function personToNormalized(p: Person): NormalizedContact {
   // --- occupation ---
   const occupation = p.occupations?.[0]?.value
 
-  // --- photo: prefer the one marked default, fall back to first ---
-  const defaultPhoto = p.photos?.find((ph) => ph.default === true)
-  const photoUrl = defaultPhoto?.url ?? p.photos?.[0]?.url ?? null
+  // --- photo: take the first user-uploaded photo; ignore Google's default
+  // placeholder. People API marks the gray silhouette / generic avatar with
+  // `default: true` — that is NOT a real user photo, just Google's stand-in.
+  // Storing the placeholder URL here would later make every Google contact
+  // light up the "has profile photo" marker, which is wrong. ---
+  const realPhoto = p.photos?.find((ph) => ph.default !== true && ph.url != null)
+  const photoUrl = realPhoto?.url ?? null
 
   // photoContentHash is filled by the fetcher after downloading the image;
   // mapper always leaves it null.

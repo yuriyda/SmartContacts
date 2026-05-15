@@ -298,8 +298,12 @@ describe('fixture F: photos, userDefined, memberships, imClients, urls, events',
     ],
   }
 
-  it('picks the default photo', () => {
-    expect(personToNormalized(person).photoUrl).toBe('https://lh3.google.com/photo/preferred')
+  it('picks the user-uploaded photo, skipping Google’s default-marked placeholder', () => {
+    // People API marks the gray-silhouette / generic-avatar entry with
+    // `default: true`. The mapper must prefer the user-uploaded photo
+    // (`default: false`) so the snapshot does not record a placeholder as
+    // the contact’s avatar URL.
+    expect(personToNormalized(person).photoUrl).toBe('https://lh3.google.com/photo/other')
   })
 
   it('photoContentHash is always null from mapper', () => {
@@ -344,7 +348,7 @@ describe('fixture F: photos, userDefined, memberships, imClients, urls, events',
 // Photo default-marker edge cases
 // ---------------------------------------------------------------------------
 describe('photo default-marker edge cases', () => {
-  it('picks [0] when photos[0].default=true and photos[1].default=false', () => {
+  it('skips the default-marked photo and picks the non-default one', () => {
     const person: Person = {
       resourceName: 'people/cx',
       etag: '',
@@ -353,16 +357,25 @@ describe('photo default-marker edge cases', () => {
         { url: 'https://photo.example/second', default: false },
       ],
     }
-    expect(personToNormalized(person).photoUrl).toBe('https://photo.example/first')
+    expect(personToNormalized(person).photoUrl).toBe('https://photo.example/second')
   })
 
-  it('falls back to [0] when neither photo is marked default', () => {
+  it('treats missing `default` field as not-default and picks [0]', () => {
     const person: Person = {
       resourceName: 'people/cy',
       etag: '',
       photos: [{ url: 'https://photo.example/a' }, { url: 'https://photo.example/b' }],
     }
     expect(personToNormalized(person).photoUrl).toBe('https://photo.example/a')
+  })
+
+  it('returns null when every photo is marked default (only Google placeholder)', () => {
+    const person: Person = {
+      resourceName: 'people/cw',
+      etag: '',
+      photos: [{ url: 'https://lh3.googleusercontent.com/a/default-user', default: true }],
+    }
+    expect(personToNormalized(person).photoUrl).toBeNull()
   })
 
   it('returns null when photos array is absent', () => {

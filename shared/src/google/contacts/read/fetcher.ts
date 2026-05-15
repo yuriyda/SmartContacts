@@ -50,6 +50,15 @@ export interface FetchAllDeps {
   fetchImpl?: typeof fetch
   /** Default: 100 */
   pageSize?: number
+  /**
+   * Delay (ms) inserted between consecutive photo downloads to avoid tripping
+   * Google CDN's per-IP rate limit (which kicks in even on strictly sequential
+   * fetches once ~80–100 photos hit lh3-lh6 in quick succession).
+   * Default: 150. Set to 0 in unit tests to keep them fast.
+   */
+  photoThrottleMs?: number
+  /** Injectable sleep used for the photo throttle and tests. */
+  photoSleepFn?: (ms: number) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +221,8 @@ export async function fetchAll(deps: FetchAllDeps): Promise<FetchResult> {
     deps.runId,
     logger,
     deps.fetchImpl,
+    deps.photoThrottleMs ?? 150,
+    deps.photoSleepFn,
   )
 
   return {
@@ -238,16 +249,33 @@ async function downloadPersonPhotos(
   runId: string,
   logger: SyncLogRepo,
   fetchImpl?: typeof fetch,
+  throttleMs = 150,
+  sleepFn?: (ms: number) => Promise<void>,
 ): Promise<NormalizedContact[]> {
   const effectiveFetch = fetchImpl ?? globalThis.fetch
+  const effectiveSleep =
+    sleepFn ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   const results: NormalizedContact[] = []
+  let photoAttempts = 0
 
   for (const person of persons) {
     const normalized = personToNormalized(person)
 
     if (normalized.photoUrl !== null) {
+      // Throttle BEFORE the request (skip the very first photo). Google CDN
+      // tarpits a single IP once ~80–100 lh3-lh6 fetches arrive back-to-back,
+      // even strictly sequential — a small pre-request delay prevents the trip.
+      if (photoAttempts > 0 && throttleMs > 0) {
+        await effectiveSleep(throttleMs)
+      }
+      photoAttempts++
+
       try {
-        const { bytes, mime, hash } = await downloadPhoto(normalized.photoUrl, effectiveFetch)
+        const { bytes, mime, hash } = await downloadPhoto(
+          normalized.photoUrl,
+          effectiveFetch,
+          effectiveSleep,
+        )
         normalized.photoBytes = bytes
         normalized.photoMime = mime
         normalized.photoContentHash = hash
