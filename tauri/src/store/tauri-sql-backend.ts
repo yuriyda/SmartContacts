@@ -24,19 +24,86 @@
 import Database from '@tauri-apps/plugin-sql'
 import type { DbAdapter } from '@smart-contacts/shared'
 
+/**
+ * @tauri-apps/plugin-sql v2.4 has no BLOB binding for parameterized values —
+ * `JsonValue::Array` (the only shape Uint8Array / number[] can take through
+ * Tauri's JSON IPC) falls through to `bind(value)` in plugins-workspace
+ * plugins/sql/src/wrapper.rs ~line 116, which sqlx encodes as JSON text.
+ * SQLite then stores it as TEXT via column-type affinity, defeating our
+ * `blob BLOB` declaration. Tracked upstream as plugins-workspace#105 (open
+ * since 2023); PR #3125 is unmerged as of 2026-05.
+ *
+ * Workaround: rewrite the SQL on the way in. Any Uint8Array param is replaced
+ * by an inline SQLite hex literal `x'FFD8FF...'`, which sqlite parses as a
+ * proper BLOB token — independent of plugin-sql's binding code. Remaining
+ * (non-blob) params keep their `?` slots and pass through normally.
+ *
+ * Assumptions:
+ *  - All `?` characters in our SQL are positional placeholders. We never
+ *    write `?` inside string literals or identifiers. If that ever changes,
+ *    this routine must be upgraded to a real tokenizer.
+ *  - Hex literals do not require escaping.
+ */
+function rewriteBlobParams(
+  sql: string,
+  params: readonly unknown[] | undefined,
+): { sql: string; params: unknown[] } {
+  if (params === undefined || params.length === 0) return { sql, params: [] }
+
+  // Fast path: no binary params → skip the rewrite cost entirely.
+  let hasBlob = false
+  for (let i = 0; i < params.length; i++) {
+    if (params[i] instanceof Uint8Array) {
+      hasBlob = true
+      break
+    }
+  }
+  if (!hasBlob) return { sql, params: [...params] }
+
+  let out = ''
+  let cursor = 0
+  const remaining: unknown[] = []
+  let paramIdx = 0
+
+  while (cursor < sql.length) {
+    const q = sql.indexOf('?', cursor)
+    if (q === -1) {
+      out += sql.slice(cursor)
+      break
+    }
+    out += sql.slice(cursor, q)
+    const p = params[paramIdx]
+    if (p instanceof Uint8Array) {
+      let hex = ''
+      for (let i = 0; i < p.length; i++) hex += p[i]!.toString(16).padStart(2, '0')
+      out += `x'${hex}'`
+    } else {
+      out += '?'
+      remaining.push(p)
+    }
+    paramIdx++
+    cursor = q + 1
+  }
+  // Carry any trailing params that have no `?` (defensive — would be a caller bug).
+  while (paramIdx < params.length) remaining.push(params[paramIdx++])
+  return { sql: out, params: remaining }
+}
+
 export async function openTauriSqlAdapter(filename = 'smart-contacts.db'): Promise<DbAdapter> {
   const db = await Database.load(`sqlite:${filename}`)
 
   const adapter: DbAdapter = {
     async select<T>(sql: string, params?: unknown[]): Promise<T[]> {
+      const { sql: rewrittenSql, params: rewrittenParams } = rewriteBlobParams(sql, params)
       // plugin-sql select<T> returns T directly (typed as Promise<T> in the lib),
       // but for array results the runtime value is T[]. We cast accordingly.
-      const rows = await db.select<T[]>(sql, params ?? [])
+      const rows = await db.select<T[]>(rewrittenSql, rewrittenParams)
       return rows
     },
 
     async execute(sql: string, params?: unknown[]): Promise<void> {
-      await db.execute(sql, params ?? [])
+      const { sql: rewrittenSql, params: rewrittenParams } = rewriteBlobParams(sql, params)
+      await db.execute(rewrittenSql, rewrittenParams)
     },
 
     async transaction<T>(fn: (tx: DbAdapter) => Promise<T>): Promise<T> {
