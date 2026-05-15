@@ -40,6 +40,7 @@ import { SyncLogRepo } from './read/sync-log-repo'
 import { PullEngine } from './read/pull-engine'
 import { contactRowToNormalized } from './read/mapper'
 import type { NormalizedContact } from './read/types'
+import { downloadPhoto, RateLimitedError } from './read/photo-fetch'
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -94,6 +95,53 @@ export interface GoogleSyncRuntime {
   clientIdStore: ClientIdStore
   /** UI Setup section reads/writes client_secret via this store (persisted in meta table). */
   clientSecretStore: ClientSecretStore
+  /**
+   * Lazy on-demand avatar fetch (spec follow-up: bulk photo phase is unworkable
+   * for 1000+ contacts due to Google CDN per-IP rate limit on lh3-lh6).
+   *
+   * Semantics:
+   *  - Already-downloaded → returns 'cached' without touching the network.
+   *  - Snapshot has no photoUrl → 'no-url'.
+   *  - HTTP 429 from CDN → opens a 60s global circuit breaker → 'rate-limited'.
+   *  - Other download error → 'failed' (logged via syncLogRepo).
+   *  - Success → INSERT into `avatars` and returns 'ok'.
+   *
+   * Concurrent calls for the same contactId share a single in-flight Promise,
+   * so opening the same contact twice quickly does NOT spawn two fetches.
+   */
+  fetchAvatarOnDemand(
+    contactId: string,
+    googleResourceName: string,
+  ): Promise<'ok' | 'cached' | 'rate-limited' | 'no-url' | 'failed'>
+  /** Read stored avatar bytes for a contact; null if none. */
+  getAvatarBlob(contactId: string): Promise<{ blob: Uint8Array; mime: string } | null>
+  /**
+   * Return contacts (by local id) for which Google’s snapshot declares a
+   * non-null `photoUrl`. Independent of whether the photo bytes have been
+   * fetched locally yet — the list-view “has photo” marker reflects what
+   * Google has, not what we’ve cached.
+   *
+   * Cheap one-shot query against snapshots (1500 rows ≈ <5 ms via JSON1).
+   */
+  listGooglePhotoContactIds(): Promise<string[]>
+  /**
+   * Return every cached avatar (bytes + mime) keyed by `contactId`. Used by
+   * the list view to render thumbnails for contacts whose photos have been
+   * downloaded. Applies the same validity filters as `getAvatarBlob` so
+   * legacy garbled rows are never surfaced.
+   */
+  listAvatarBlobs(): Promise<Array<{ contactId: string; blob: Uint8Array; mime: string }>>
+  /**
+   * One-shot cleanup for the duplicate fallout of a Disconnect-with-keep +
+   * Reconnect + Sync sequence: `disconnect({deleteImported:false})` nulls
+   * `google_resource_name` on every Google-imported contact, so the next
+   * full sync inserts a fresh row per Google contact alongside the orphaned
+   * original. This routine finds those orphans (NULL `google_resource_name`)
+   * for which a Google-linked twin exists with the exact same display_name,
+   * and deletes the orphan. Cascades drop interactions / tasks attached to
+   * the deleted rows. Returns the number of orphans removed.
+   */
+  removeOrphanDuplicates(): Promise<number>
 }
 
 // ---------------------------------------------------------------------------
@@ -1003,6 +1051,265 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
     )
   }
 
+  // ---------------------------------------------------------------------
+  // Lazy on-demand avatar fetch
+  //
+  // Bulk photo download during sync is unworkable for 1000+ contacts —
+  // Google CDN (lh3-lh6.googleusercontent.com) per-IP tarpits faster than
+  // any retry backoff can resolve. Instead, photos are fetched lazily when
+  // a contact is opened in the UI, with three layers of safety:
+  //   1. In-flight dedup per contactId — repeated opens never spawn parallel.
+  //   2. Global 60s circuit breaker after any 429 — protects the IP from
+  //      cascading rate-limit on user click-storms.
+  //   3. maxRetries=0 in downloadPhoto — one shot, no backoff spam.
+  // ---------------------------------------------------------------------
+
+  const CIRCUIT_BREAKER_MS = 60_000
+  const inFlightAvatarFetches = new Map<
+    string,
+    Promise<'ok' | 'cached' | 'rate-limited' | 'no-url' | 'failed'>
+  >()
+  let avatarRateLimitedUntilMs = 0
+
+  async function fetchAvatarOnDemand(
+    contactId: string,
+    googleResourceName: string,
+  ): Promise<'ok' | 'cached' | 'rate-limited' | 'no-url' | 'failed'> {
+    const existing = inFlightAvatarFetches.get(contactId)
+    if (existing !== undefined) return existing
+
+    const promise: Promise<'ok' | 'cached' | 'rate-limited' | 'no-url' | 'failed'> = (async () => {
+      // Already cached locally?
+      const existingRows = await db.select<{ one: number }>(
+        'SELECT 1 AS one FROM avatars WHERE contact_id = ?',
+        [contactId],
+      )
+      if (existingRows.length > 0) return 'cached'
+
+      // Circuit breaker open?
+      const nowDate = (opts.now ?? (() => new Date()))()
+      const nowMs = nowDate.getTime()
+      if (nowMs < avatarRateLimitedUntilMs) return 'rate-limited'
+
+      // Resolve the photo URL from the most recent snapshot for this contact.
+      const snapshot = await snapshotRepo.get(googleResourceName)
+      if (snapshot === null) return 'no-url'
+
+      let payload: { photoUrl?: unknown }
+      try {
+        payload = JSON.parse(snapshot.payloadJson) as { photoUrl?: unknown }
+      } catch {
+        return 'no-url'
+      }
+      const photoUrl = payload.photoUrl
+      if (typeof photoUrl !== 'string' || photoUrl.length === 0) return 'no-url'
+
+      // Skip Google's default-placeholder URL: older snapshots wrote it as
+      // photoUrl when the contact had no real user photo. Downloading would
+      // succeed but produce a gray silhouette instead of initials, which is
+      // worse UX than just showing initials.
+      if (photoUrl.includes('/a/default-user')) return 'no-url'
+
+      // Google's People API hands out URLs with `=s100` (100px) by default,
+      // which is fine for the 64px avatar circle but pixelates in the
+      // fullscreen lightbox. Bump to 400px on lazy fetch — same one-shot
+      // request, no extra round-trip, sharper full-size preview later.
+      const upsizedUrl = photoUrl.replace(/=s\d+(?:-[^=]*)?$/, '=s400')
+      const fetchUrl = upsizedUrl === photoUrl ? `${photoUrl}=s400` : upsizedUrl
+
+      const effectiveFetch = opts.fetchImpl ?? globalThis.fetch
+      try {
+        const { bytes, mime, hash } = await downloadPhoto(
+          fetchUrl,
+          effectiveFetch,
+          undefined,
+          0, // maxRetries=0 — single attempt; no backoff spam on tarpit.
+        )
+
+        const fetchedAt = nowDate.toISOString()
+        // Store the URL we actually fetched (the upsized one). getAvatarBlob
+        // uses this to detect rows downloaded by older builds at the default
+        // =s100 size and auto-refresh them on next open.
+        await db.execute(
+          `INSERT INTO avatars (contact_id, blob, mime, source_url, fetched_at, hash)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(contact_id) DO UPDATE
+           SET blob = excluded.blob,
+               mime = excluded.mime,
+               source_url = excluded.source_url,
+               fetched_at = excluded.fetched_at,
+               hash = excluded.hash`,
+          [contactId, bytes, mime, fetchUrl, fetchedAt, hash],
+        )
+        return 'ok'
+      } catch (err) {
+        if (err instanceof RateLimitedError) {
+          avatarRateLimitedUntilMs = nowMs + CIRCUIT_BREAKER_MS
+          await syncLogRepo.append({
+            runId: 'avatar-on-demand',
+            event: 'photo_download_failed',
+            level: 'warn',
+            payload: {
+              contactId,
+              googleResourceName,
+              error: 'rate_limited',
+              cooldownMs: CIRCUIT_BREAKER_MS,
+            },
+          })
+          return 'rate-limited'
+        }
+        const message = err instanceof Error ? err.message : String(err)
+        await syncLogRepo.append({
+          runId: 'avatar-on-demand',
+          event: 'photo_download_failed',
+          level: 'warn',
+          payload: { contactId, googleResourceName, error: message },
+        })
+        return 'failed'
+      }
+    })().finally(() => {
+      inFlightAvatarFetches.delete(contactId)
+    })
+
+    inFlightAvatarFetches.set(contactId, promise)
+    return promise
+  }
+
+  async function getAvatarBlob(
+    contactId: string,
+  ): Promise<{ blob: Uint8Array; mime: string } | null> {
+    const rows = await db.select<{ blob: unknown; mime: string; source_url: string | null }>(
+      'SELECT blob, mime, source_url FROM avatars WHERE contact_id = ?',
+      [contactId],
+    )
+    const row = rows[0]
+    if (row === undefined) return null
+
+    // Self-heal #1 — older builds wrote Uint8Array via plugins-workspace#105's
+    // broken BLOB path and stored a JSON-stringified object in TEXT. Detect
+    // by string payload, drop, re-download cleanly via the inline-hex path.
+    if (typeof row.blob === 'string') {
+      await db.execute('DELETE FROM avatars WHERE contact_id = ?', [contactId])
+      return null
+    }
+
+    // Self-heal #2 — earlier lazy-fetch builds (and bulk sync) wrote photos at
+    // Google's default =s100 size, which pixelates in the lightbox. Drop any
+    // row not yet upgraded to =s400 so the next open re-downloads sharper.
+    // `source_url` is NULL for bulk-sync rows and contains '=s400' only for
+    // lazy fetches issued by the current code path.
+    if (row.source_url === null || !row.source_url.includes('=s400')) {
+      await db.execute('DELETE FROM avatars WHERE contact_id = ?', [contactId])
+      return null
+    }
+
+    let bytes: Uint8Array
+    if (row.blob instanceof Uint8Array) {
+      bytes = row.blob
+    } else if (Array.isArray(row.blob)) {
+      bytes = new Uint8Array(row.blob as number[])
+    } else {
+      // Unknown shape — treat as garbled and drop.
+      await db.execute('DELETE FROM avatars WHERE contact_id = ?', [contactId])
+      return null
+    }
+    return { blob: bytes, mime: row.mime }
+  }
+
+  async function removeOrphanDuplicates(): Promise<number> {
+    // Pick orphans first so we can return an accurate count even if the
+    // DELETE statement's rowsAffected isn't available through the adapter.
+    const orphans = await db.select<{ id: string }>(
+      `SELECT c1.id
+       FROM contacts c1
+       WHERE c1.google_resource_name IS NULL
+         AND c1.deleted_at IS NULL
+         AND EXISTS (
+           SELECT 1 FROM contacts c2
+           WHERE c2.google_resource_name IS NOT NULL
+             AND c2.deleted_at IS NULL
+             AND c2.display_name = c1.display_name
+         )`,
+    )
+    if (orphans.length === 0) return 0
+    // Chunked DELETE to keep the SQL string small for very large duplicate
+    // sets (1500+). SQLite handles thousands of params fine, but staying
+    // under 500 per batch keeps things predictable across adapters.
+    const CHUNK = 500
+    for (let i = 0; i < orphans.length; i += CHUNK) {
+      const slice = orphans.slice(i, i + CHUNK)
+      const placeholders = slice.map(() => '?').join(',')
+      await db.execute(
+        `DELETE FROM contacts WHERE id IN (${placeholders})`,
+        slice.map((r) => r.id),
+      )
+    }
+    await syncLogRepo.append({
+      runId: 'orphan-cleanup',
+      event: 'orphan_duplicates_removed',
+      level: 'info',
+      payload: { count: orphans.length },
+    })
+    return orphans.length
+  }
+
+  async function listAvatarBlobs(): Promise<
+    Array<{ contactId: string; blob: Uint8Array; mime: string }>
+  > {
+    const rows = await db.select<{ contact_id: string; blob: unknown; mime: string }>(
+      `SELECT contact_id, blob, mime FROM avatars
+       WHERE typeof(blob) = 'blob'
+         AND source_url IS NOT NULL
+         AND source_url LIKE '%=s400%'`,
+    )
+    const out: Array<{ contactId: string; blob: Uint8Array; mime: string }> = []
+    for (const r of rows) {
+      // Tauri plugin-sql returns BLOB as number[] over JSON IPC; wa-sqlite
+      // (browser tests) returns Uint8Array directly. Handle both.
+      let bytes: Uint8Array
+      if (r.blob instanceof Uint8Array) bytes = r.blob
+      else if (Array.isArray(r.blob)) bytes = new Uint8Array(r.blob as number[])
+      else continue
+      out.push({ contactId: r.contact_id, blob: bytes, mime: r.mime })
+    }
+    return out
+  }
+
+  async function listGooglePhotoContactIds(): Promise<string[]> {
+    // Snapshot's payload_json always carries the `photoUrl` key (the mapper
+    // sets it to null when Google has no real user photo). JSON1's
+    // json_extract is shipped with every modern SQLite (≥3.38), so it's
+    // available in both wa-sqlite (browser tests) and Tauri's native sqlx.
+    //
+    // Heuristic against legacy snapshots: a real user photo has a unique URL
+    // (contains a per-contact token), whereas Google's contact-metadata
+    // placeholder URLs (`/cm/AGPWSu…` and `/a/default-user`) are reused across
+    // many contacts at once. Diagnostic on a live 1500-contact DB showed
+    // placeholders appearing 11-21 times each. Filtering by `COUNT(url) = 1`
+    // separates real photos from placeholders without parsing People API
+    // metadata that the old mapper has already thrown away.
+    //
+    // Once a full re-sync rewrites snapshots through the corrected mapper
+    // (which writes null for placeholder photos in the first place), this
+    // filter becomes redundant but harmless.
+    const rows = await db.select<{ id: string }>(
+      `WITH photo_counts AS (
+         SELECT json_extract(payload_json, '$.photoUrl') AS url, COUNT(*) AS cnt
+         FROM google_contact_snapshots
+         WHERE json_extract(payload_json, '$.photoUrl') IS NOT NULL
+         GROUP BY json_extract(payload_json, '$.photoUrl')
+       )
+       SELECT c.id
+       FROM contacts c
+       JOIN google_contact_snapshots s ON s.google_resource_name = c.google_resource_name
+       JOIN photo_counts pc ON pc.url = json_extract(s.payload_json, '$.photoUrl')
+       WHERE c.deleted_at IS NULL
+         AND pc.cnt = 1
+         AND pc.url NOT LIKE '%/a/default-user%'`,
+    )
+    return rows.map((r) => r.id)
+  }
+
   return {
     pullEngine,
     isConnected,
@@ -1011,6 +1318,11 @@ export function makeGoogleSyncRuntime(opts: MakeGoogleSyncRuntimeOpts): GoogleSy
     getPendingConflictCount,
     getLastSyncInfo,
     resolveConflict,
+    fetchAvatarOnDemand,
+    getAvatarBlob,
+    listGooglePhotoContactIds,
+    listAvatarBlobs,
+    removeOrphanDuplicates,
     repos: {
       snapshot: snapshotRepo,
       conflict: conflictRepo,

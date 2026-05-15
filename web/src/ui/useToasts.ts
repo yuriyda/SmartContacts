@@ -13,17 +13,24 @@ interface Toast {
   message: string
   action?: { label: string; onClick: () => void }
   duration?: number
+  /** When true, the toast stays on screen until the user clicks the close
+   *  button. Use for errors / failures the user must read before dismissing. */
+  persistent?: boolean
 }
 
 export function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([])
 
   const push = useCallback(
-    (message: string, opts?: { action?: Toast['action']; duration?: number }) => {
+    (
+      message: string,
+      opts?: { action?: Toast['action']; duration?: number; persistent?: boolean },
+    ) => {
       const id = ulid()
       const entry: Toast = { id, message }
       if (opts?.action !== undefined) entry.action = opts.action
       if (opts?.duration !== undefined) entry.duration = opts.duration
+      if (opts?.persistent === true) entry.persistent = true
       setToasts((prev) => [...prev, entry])
       return id
     },

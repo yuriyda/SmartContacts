@@ -96,6 +96,7 @@ export const en = {
     save: 'Save',
     cancel: 'Cancel',
     add: 'Add',
+    click_photo_to_zoom: 'Click photo to view full size',
     delete: 'Delete',
     restore: 'Restore',
     touch: 'Touch',
@@ -269,6 +270,13 @@ export const en = {
     syncFailed: 'Sync failed',
     disconnectedKeep: 'Disconnected. Imported contacts kept locally.',
     disconnectedDelete: 'Disconnected. Imported contacts deleted.',
+    removeDuplicates: 'Remove duplicates',
+    removingDuplicates: 'Cleaning…',
+    removeDuplicatesHint:
+      'Removes locally-detached duplicates produced by a previous Disconnect-with-keep + Reconnect cycle.',
+    duplicatesRemoved: 'Removed',
+    noDuplicates: 'No orphan duplicates found',
+    duplicatesRemoveFailed: 'Cleanup failed',
   },
   guide: {
     title: 'Welcome to Smart Contacts',
@@ -337,6 +345,8 @@ export const en = {
     label: 'Filter:',
     clear: 'Clear filter',
     reset_all: 'Reset all',
+    with_photo: 'With photo',
+    with_photo_hint: 'Show only contacts with a Google profile photo',
   },
   event: {
     birthday: 'Birthday',

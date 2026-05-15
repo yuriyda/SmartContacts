@@ -13,14 +13,20 @@ import {
   type ContactSort,
   type ContactSortField,
 } from '@smart-contacts/shared'
+import { ImageIcon } from 'lucide-react'
 import { useApp } from './AppContext'
 
 interface SortBarProps {
   sort: ContactSort | null
   onToggle: (field: ContactSortField) => void
+  /** Optional "Show only contacts with a Google photo" toggle. Rendered only
+   *  when both props are supplied so the bar stays usable on screens that
+   *  have no Google sync wired (e.g. the offline / future PWA target). */
+  withPhotoOnly?: boolean
+  onToggleWithPhoto?: () => void
 }
 
-export function SortBar({ sort, onToggle }: SortBarProps) {
+export function SortBar({ sort, onToggle, withPhotoOnly, onToggleWithPhoto }: SortBarProps) {
   const { TC, t } = useApp()
   return (
     <div className={`flex items-center gap-1 flex-wrap px-3 py-2 border-b ${TC.borderClass}`}>
@@ -46,6 +52,23 @@ export function SortBar({ sort, onToggle }: SortBarProps) {
           </button>
         )
       })}
+      {onToggleWithPhoto && (
+        <button
+          type="button"
+          onClick={onToggleWithPhoto}
+          aria-pressed={withPhotoOnly === true}
+          title={t('filter.with_photo_hint') || 'Show only contacts with a Google photo'}
+          className={[
+            'ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors',
+            withPhotoOnly === true
+              ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-600/35'
+              : `${TC.elevated} ${TC.textSec} border border-transparent`,
+          ].join(' ')}
+        >
+          <ImageIcon size={12} />
+          {t('filter.with_photo') || 'With photo'}
+        </button>
+      )}
     </div>
   )
 }

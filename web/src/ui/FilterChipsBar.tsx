@@ -99,6 +99,24 @@ export function FilterChipsBar({
       onClear: () => setFilters({ ...filters, search: '' }),
     })
   }
+  if (filters.hasPhoto === true) {
+    chips.push({
+      key: 'hasPhoto',
+      label: t('filter.with_photo') || 'With photo',
+      onClear: () => {
+        // Drop the optional `hasPhoto` key entirely so the filter
+        // returns to its default-shape (exactOptionalPropertyTypes).
+        const next: ContactFilters = {
+          scope: filters.scope,
+          group: filters.group,
+          tag: filters.tag,
+          search: filters.search,
+        }
+        if (filters.organization !== undefined) next.organization = filters.organization
+        setFilters(next)
+      },
+    })
+  }
 
   return (
     <div className={`flex items-center gap-1.5 flex-wrap px-3 py-2 border-b ${TC.borderClass}`}>

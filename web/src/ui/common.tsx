@@ -98,6 +98,9 @@ export interface ToastProps {
   message: string
   action?: { label: string; onClick: () => void }
   duration?: number
+  /** When true, the toast does NOT auto-dismiss — only the close button clears
+   *  it. Used for errors the user must read in full. */
+  persistent?: boolean
   onDismiss: () => void
 }
 
@@ -105,9 +108,10 @@ export function Toast(p: ToastProps) {
   const { TC } = useApp()
 
   useEffect(() => {
+    if (p.persistent === true) return
     const timer = setTimeout(p.onDismiss, p.duration ?? 5000)
     return () => clearTimeout(timer)
-  }, [p.duration, p.onDismiss])
+  }, [p.duration, p.onDismiss, p.persistent])
 
   return (
     <div

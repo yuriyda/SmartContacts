@@ -17,6 +17,13 @@ export interface ContactFilters {
   organization?: string
   /** Free-text search query; non-empty overrides scope/group/tag (searches alive contacts only). */
   search: string
+  /** When true, restrict the list to contacts that have a photo available.
+   *  Today the only photo source is Google's snapshot (`photoUrl`), so this is
+   *  effectively "has Google photo" — but the field is named generically so
+   *  future locally-uploaded avatars will pass through the same filter
+   *  without touching call sites. The set of "has-photo" ids is provided by
+   *  `useAvatarContactIds` and intersected in SmartContactsApp. */
+  hasPhoto?: boolean
 }
 
 /** Default "show everything" filter. */

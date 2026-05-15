@@ -42,7 +42,8 @@ export function isFilterNonTrivial(f: ContactFilters): boolean {
     f.group !== null ||
     f.tag !== null ||
     !!f.organization ||
-    f.search.trim() !== ''
+    f.search.trim() !== '' ||
+    f.hasPhoto === true
   )
 }
 

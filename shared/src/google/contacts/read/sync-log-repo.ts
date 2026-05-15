@@ -30,6 +30,7 @@ export type SyncLogEvent =
   | 'apply_failed'
   | 'conflict_resolved'
   | 'photo_download_failed'
+  | 'orphan_duplicates_removed'
   | 'error'
 
 export interface SyncLogRow {

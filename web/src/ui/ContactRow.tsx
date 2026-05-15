@@ -39,6 +39,11 @@ interface ContactRowProps {
   onTouch?: () => void
   onSoftDelete?: () => void
   onOpenEdit?: (id: string) => void
+  /** When true, the Google badge renders an extra dot signaling cached avatar bytes. */
+  hasAvatar?: boolean
+  /** Locally cached avatar image to render inside the avatar circle in place
+   *  of initials. Falsy → keep the initials. */
+  photoDataUrl?: string | null
 }
 
 export function ContactRow({
@@ -52,6 +57,8 @@ export function ContactRow({
   onTouch: _onTouch,
   onSoftDelete: _onSoftDelete,
   onOpenEdit,
+  hasAvatar = false,
+  photoDataUrl = null,
 }: ContactRowProps) {
   const { TC, density, locale, metaSettings } = useApp()
   const name = computeDisplayName(contact, locale)
@@ -155,7 +162,7 @@ export function ContactRow({
           anySelected || multiSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
         ].join(' ')}
       />
-      <ContactAvatar id={contact.id} name={name} size={avatarSize} />
+      <ContactAvatar id={contact.id} name={name} size={avatarSize} photoDataUrl={photoDataUrl} />
 
       <div className="flex-1 min-w-0">
         <div className={`truncate text-sm ${selected ? 'text-sky-100' : TC.text}`}>
@@ -166,7 +173,7 @@ export function ContactRow({
           {contact.hidden && (
             <EyeOff size={11} className="inline-block ml-1 text-sky-400" aria-label="Hidden" />
           )}
-          <ImportedFromGoogleBadge show={!!contact.googleResourceName} />
+          <ImportedFromGoogleBadge show={!!contact.googleResourceName} hasAvatar={hasAvatar} />
         </div>
         {density !== 'compact' && (
           <div className={`truncate text-[11px] ${TC.textMuted}`}>

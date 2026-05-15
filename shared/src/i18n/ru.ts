@@ -98,6 +98,7 @@ export const ru: Dict = {
     save: 'Сохранить',
     cancel: 'Отмена',
     add: 'Добавить',
+    click_photo_to_zoom: 'Нажмите на фото для просмотра',
     delete: 'Удалить',
     restore: 'Восстановить',
     touch: 'Контакт',
@@ -273,6 +274,13 @@ export const ru: Dict = {
     syncFailed: 'Ошибка синхронизации',
     disconnectedKeep: 'Отключено. Импортированные контакты остались локально.',
     disconnectedDelete: 'Отключено. Импортированные контакты удалены.',
+    removeDuplicates: 'Удалить дубликаты',
+    removingDuplicates: 'Удаляю…',
+    removeDuplicatesHint:
+      'Удаляет orphan-копии контактов, оставшиеся после цикла Disconnect (с сохранением) + Reconnect.',
+    duplicatesRemoved: 'Удалено',
+    noDuplicates: 'Дубликатов не найдено',
+    duplicatesRemoveFailed: 'Ошибка очистки',
   },
   guide: {
     title: 'Добро пожаловать в Smart Contacts',
@@ -341,6 +349,8 @@ export const ru: Dict = {
     label: 'Фильтр:',
     clear: 'Сбросить фильтр',
     reset_all: 'Сбросить все',
+    with_photo: 'С фото',
+    with_photo_hint: 'Показывать только контакты с фото Google',
   },
   event: {
     birthday: 'День рождения',

@@ -61,6 +61,7 @@ export interface SettingsDialogProps {
 interface ToastEntry {
   id: string
   message: string
+  persistent?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -122,9 +123,11 @@ export function SettingsDialog({
     return () => document.removeEventListener('keydown', handler, true)
   }, [open, onClose])
 
-  const addToast = useCallback((msg: string) => {
+  const addToast = useCallback((msg: string, opts?: { persistent?: boolean }) => {
     const id = ulid()
-    setToasts((prev) => [...prev, { id, message: msg }])
+    const entry: ToastEntry = { id, message: msg }
+    if (opts?.persistent === true) entry.persistent = true
+    setToasts((prev) => [...prev, entry])
   }, [])
 
   const dismissToast = useCallback((id: string) => {
@@ -235,7 +238,11 @@ export function SettingsDialog({
 
       {/* Toast container outside modal so it's always on top */}
       <ToastContainer
-        toasts={toasts.map((t) => ({ id: t.id, message: t.message }))}
+        toasts={toasts.map((t) =>
+          t.persistent === true
+            ? { id: t.id, message: t.message, persistent: true }
+            : { id: t.id, message: t.message },
+        )}
         onDismiss={dismissToast}
       />
     </>

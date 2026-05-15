@@ -23,6 +23,7 @@ import {
 import type {
   Contact,
   CustomFieldDef,
+  GoogleSyncRuntime,
   Phone,
   Email,
   PostalAddress,
@@ -38,6 +39,8 @@ import type {
 import { computeDisplayName, ulid } from '@smart-contacts/shared'
 import { useApp } from './AppContext'
 import { ContactAvatar } from './ContactAvatar'
+import { useContactAvatar } from './useContactAvatar'
+import { AvatarLightbox } from './AvatarLightbox'
 import { TagPill, GroupBadge } from './badges'
 import { X, Plus } from './icons'
 
@@ -58,6 +61,8 @@ export interface ContactEditDialogProps {
   allContacts: Contact[]
   onSave: (c: Contact) => void
   onCancel: () => void
+  /** Optional Google sync runtime — enables lazy on-demand avatar fetch + lightbox. */
+  googleSync?: GoogleSyncRuntime | null
 }
 
 // ---------------------------------------------------------------------------
@@ -966,6 +971,7 @@ export function ContactEditDialog({
   allContacts,
   onSave,
   onCancel,
+  googleSync = null,
 }: ContactEditDialogProps) {
   const { TC, t, locale } = useApp()
 
@@ -973,6 +979,11 @@ export function ContactEditDialog({
   const [form, setForm] = useState<Contact>(() =>
     contact ? structuredClone(contact) : freshContact(),
   )
+
+  // Lazy on-demand avatar (also fires when user opens the dialog for a Google
+  // contact whose photo hasn't been cached yet via ContactDetail).
+  const photoDataUrl = useContactAvatar(googleSync, contact?.id, contact?.googleResourceName)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
 
   // Re-sync when dialog re-opens or the contact prop changes
   useEffect(() => {
@@ -1065,6 +1076,24 @@ export function ContactEditDialog({
 
         {/* ── Body ── */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+          {/* Avatar preview — only meaningful when the contact has bytes cached. */}
+          {!isNew && (
+            <div className="flex items-center gap-3">
+              <ContactAvatar
+                id={form.id}
+                name={computeDisplayName(form, locale)}
+                size={72}
+                photoDataUrl={photoDataUrl}
+                onPhotoClick={photoDataUrl ? () => setLightboxOpen(true) : undefined}
+              />
+              {photoDataUrl !== null && (
+                <p className={`text-xs ${TC.textMuted}`}>
+                  {t('actions.click_photo_to_zoom') || 'Click photo to view full size'}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* 1. Names */}
           <FormSection title={t('field.display_name')}>
             <div className="grid grid-cols-2 gap-3">
@@ -1504,6 +1533,13 @@ export function ContactEditDialog({
           </button>
         </div>
       </div>
+
+      <AvatarLightbox
+        open={lightboxOpen}
+        src={photoDataUrl}
+        alt={computeDisplayName(form, locale)}
+        onClose={() => setLightboxOpen(false)}
+      />
     </div>
   )
 }

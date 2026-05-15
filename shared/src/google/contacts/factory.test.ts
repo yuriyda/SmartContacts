@@ -1228,3 +1228,419 @@ describe('getAccessToken when refresh fails with InvalidGrantError', () => {
     await db.close()
   })
 })
+
+// ---------------------------------------------------------------------------
+// fetchAvatarOnDemand + getAvatarBlob
+// ---------------------------------------------------------------------------
+
+describe('fetchAvatarOnDemand', () => {
+  const VALID_PHOTO_URL = 'https://lh3.googleusercontent.com/test-photo.jpg'
+  const PHOTO_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]) // JPEG SOI marker prefix
+
+  /** Insert a snapshot row whose payload_json contains the given photoUrl (or no photoUrl when null). */
+  async function insertSnapshot(
+    db: Awaited<ReturnType<typeof freshDb>>,
+    resourceName: string,
+    photoUrl: string | null,
+  ): Promise<void> {
+    const payload: Record<string, unknown> = { googleResourceName: resourceName }
+    if (photoUrl !== null) payload['photoUrl'] = photoUrl
+    await db.execute(
+      `INSERT OR REPLACE INTO google_contact_snapshots
+         (google_resource_name, etag, update_time, payload_json, last_synced_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        resourceName,
+        'etag-x',
+        '2026-01-01T00:00:00Z',
+        JSON.stringify(payload),
+        '2026-01-01T00:00:00Z',
+      ],
+    )
+  }
+
+  /** Build a fetch mock returning a Response with the given status/body. */
+  function makeFetch(status: number, bytes?: Uint8Array): typeof fetch {
+    return vi.fn(async () => {
+      if (status === 200 && bytes !== undefined) {
+        const stream = new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(bytes)
+            c.close()
+          },
+        })
+        return new Response(stream, {
+          status: 200,
+          headers: new Headers({ 'content-type': 'image/jpeg' }),
+        })
+      }
+      return new Response(null, { status })
+    }) as typeof fetch
+  }
+
+  it('returns "cached" when avatar already exists in DB', async () => {
+    const db = await freshDb('factory-test-avatar-cached')
+    const tokenStore = makeMemoryTokenStore()
+    const fetchImpl = vi.fn() as unknown as typeof fetch
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+      fetchImpl,
+    })
+
+    await db.execute(
+      `INSERT INTO avatars (contact_id, blob, mime, source_url, fetched_at, hash)
+       VALUES (?, ?, ?, NULL, ?, ?)`,
+      ['c-1', PHOTO_BYTES, 'image/jpeg', '2026-01-01T00:00:00Z', 'hash-x'],
+    )
+
+    const result = await runtime.fetchAvatarOnDemand('c-1', 'people/x1')
+    expect(result).toBe('cached')
+    expect(fetchImpl).not.toHaveBeenCalled()
+    await db.close()
+  })
+
+  it('returns "no-url" when snapshot is missing', async () => {
+    const db = await freshDb('factory-test-avatar-nosnapshot')
+    const tokenStore = makeMemoryTokenStore()
+    const fetchImpl = vi.fn() as unknown as typeof fetch
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+      fetchImpl,
+    })
+
+    const result = await runtime.fetchAvatarOnDemand('c-2', 'people/missing')
+    expect(result).toBe('no-url')
+    expect(fetchImpl).not.toHaveBeenCalled()
+    await db.close()
+  })
+
+  it('returns "no-url" when snapshot has no photoUrl', async () => {
+    const db = await freshDb('factory-test-avatar-nophotourl')
+    const tokenStore = makeMemoryTokenStore()
+    const fetchImpl = vi.fn() as unknown as typeof fetch
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+      fetchImpl,
+    })
+
+    await insertSnapshot(db, 'people/r3', null)
+    const result = await runtime.fetchAvatarOnDemand('c-3', 'people/r3')
+    expect(result).toBe('no-url')
+    expect(fetchImpl).not.toHaveBeenCalled()
+    await db.close()
+  })
+
+  it('success path: downloads, INSERTs avatar, returns "ok"', async () => {
+    const db = await freshDb('factory-test-avatar-success')
+    const tokenStore = makeMemoryTokenStore()
+    const fetchImpl = makeFetch(200, PHOTO_BYTES)
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+      fetchImpl,
+    })
+
+    await insertSnapshot(db, 'people/r4', VALID_PHOTO_URL)
+    const result = await runtime.fetchAvatarOnDemand('c-4', 'people/r4')
+    expect(result).toBe('ok')
+
+    const rows = await db.select<{ mime: string; source_url: string }>(
+      'SELECT mime, source_url FROM avatars WHERE contact_id = ?',
+      ['c-4'],
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.mime).toBe('image/jpeg')
+    // Lazy fetch appends =s400 to the original snapshot URL for sharper full-size view.
+    expect(rows[0]!.source_url).toBe(`${VALID_PHOTO_URL}=s400`)
+    await db.close()
+  })
+
+  it('429 opens circuit breaker; subsequent call within 60s returns "rate-limited" without fetching', async () => {
+    const db = await freshDb('factory-test-avatar-429')
+    const tokenStore = makeMemoryTokenStore()
+    const fetchImpl = makeFetch(429)
+    let nowMs = 1_000_000
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+      fetchImpl,
+      now: () => new Date(nowMs),
+    })
+
+    await insertSnapshot(db, 'people/r5', VALID_PHOTO_URL)
+    const first = await runtime.fetchAvatarOnDemand('c-5', 'people/r5')
+    expect(first).toBe('rate-limited')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    // Advance 30s — still inside 60s breaker. No new fetch must occur.
+    nowMs += 30_000
+    await insertSnapshot(db, 'people/r5b', VALID_PHOTO_URL)
+    const second = await runtime.fetchAvatarOnDemand('c-5b', 'people/r5b')
+    expect(second).toBe('rate-limited')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    // Advance past 60s — breaker resets; next call goes to network.
+    nowMs += 31_000
+    const third = await runtime.fetchAvatarOnDemand('c-5c', 'people/r5b')
+    expect(third).toBe('rate-limited') // still 429, but at least it tried
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+
+    await db.close()
+  })
+
+  it('concurrent calls for the same contactId share one in-flight Promise', async () => {
+    const db = await freshDb('factory-test-avatar-inflight')
+    const tokenStore = makeMemoryTokenStore()
+    // Slow fetch — both calls must arrive while it's still pending.
+    let resolveFetch: (r: Response) => void = () => {}
+    const pending = new Promise<Response>((resolve) => {
+      resolveFetch = resolve
+    })
+    const fetchImpl = vi.fn(async () => pending) as unknown as typeof fetch
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+      fetchImpl,
+    })
+
+    await insertSnapshot(db, 'people/r6', VALID_PHOTO_URL)
+    const p1 = runtime.fetchAvatarOnDemand('c-6', 'people/r6')
+    const p2 = runtime.fetchAvatarOnDemand('c-6', 'people/r6')
+
+    // Resolve the single in-flight fetch with a 200 image response.
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(PHOTO_BYTES)
+        c.close()
+      },
+    })
+    resolveFetch(
+      new Response(stream, {
+        status: 200,
+        headers: new Headers({ 'content-type': 'image/jpeg' }),
+      }),
+    )
+
+    const [r1, r2] = await Promise.all([p1, p2])
+    expect(r1).toBe('ok')
+    expect(r2).toBe('ok')
+    // The whole point — fetch must have been called exactly once.
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    await db.close()
+  })
+
+  it('listGooglePhotoContactIds returns ids whose snapshot has a non-null photoUrl', async () => {
+    const db = await freshDb('factory-test-list-google-photo')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    expect(await runtime.listGooglePhotoContactIds()).toEqual([])
+
+    // Insert two contacts + matching snapshots: one with photoUrl, one without.
+    const now = '2026-01-01T00:00:00Z'
+    await db.execute(
+      `INSERT INTO contacts (
+         id, display_name, created_at, updated_at, lamport_ts, device_id,
+         google_resource_name
+       ) VALUES (?, ?, ?, ?, 0, 'dev-1', ?)`,
+      ['c-with-photo', 'WithPhoto', now, now, 'people/r-with'],
+    )
+    await db.execute(
+      `INSERT INTO contacts (
+         id, display_name, created_at, updated_at, lamport_ts, device_id,
+         google_resource_name
+       ) VALUES (?, ?, ?, ?, 0, 'dev-1', ?)`,
+      ['c-no-photo', 'NoPhoto', now, now, 'people/r-no'],
+    )
+    await insertSnapshot(db, 'people/r-with', VALID_PHOTO_URL)
+    await insertSnapshot(db, 'people/r-no', null)
+
+    const ids = await runtime.listGooglePhotoContactIds()
+    expect(ids).toEqual(['c-with-photo'])
+    await db.close()
+  })
+
+  it('listGooglePhotoContactIds drops snapshot URLs shared by ≥2 contacts (placeholder heuristic)', async () => {
+    // Legacy buggy mapper wrote Google's contact-metadata placeholder URL
+    // (the gray silhouette under /cm/AGPWSu…) for every contact without a
+    // real photo. Diagnostics on a live 1500-row DB showed each placeholder
+    // URL reused 11-21 times across contacts. Real user photos are unique.
+    const db = await freshDb('factory-test-list-google-photo-shared-url')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const now = '2026-01-01T00:00:00Z'
+    const sharedPlaceholder = 'https://lh3.googleusercontent.com/cm/AGPWSu8xxx=s100'
+
+    // Three contacts share the same placeholder URL.
+    for (const id of ['c-plc1', 'c-plc2', 'c-plc3']) {
+      await db.execute(
+        `INSERT INTO contacts (id, display_name, created_at, updated_at, lamport_ts, device_id, google_resource_name)
+         VALUES (?, ?, ?, ?, 0, 'dev-1', ?)`,
+        [id, id, now, now, `people/r-${id}`],
+      )
+      await insertSnapshot(db, `people/r-${id}`, sharedPlaceholder)
+    }
+    // One contact with a unique (real) photo URL.
+    await db.execute(
+      `INSERT INTO contacts (id, display_name, created_at, updated_at, lamport_ts, device_id, google_resource_name)
+       VALUES (?, ?, ?, ?, 0, 'dev-1', ?)`,
+      ['c-real', 'Real', now, now, 'people/r-real'],
+    )
+    await insertSnapshot(db, 'people/r-real', VALID_PHOTO_URL)
+
+    expect(await runtime.listGooglePhotoContactIds()).toEqual(['c-real'])
+    await db.close()
+  })
+
+  it('listGooglePhotoContactIds skips Google default-placeholder URLs', async () => {
+    const db = await freshDb('factory-test-list-google-photo-default')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const now = '2026-01-01T00:00:00Z'
+    await db.execute(
+      `INSERT INTO contacts (id, display_name, created_at, updated_at, lamport_ts, device_id, google_resource_name)
+       VALUES (?, ?, ?, ?, 0, 'dev-1', ?)`,
+      ['c-placeholder', 'Plc', now, now, 'people/r-plc'],
+    )
+    await db.execute(
+      `INSERT INTO contacts (id, display_name, created_at, updated_at, lamport_ts, device_id, google_resource_name)
+       VALUES (?, ?, ?, ?, 0, 'dev-1', ?)`,
+      ['c-real', 'Real', now, now, 'people/r-real'],
+    )
+    await insertSnapshot(
+      db,
+      'people/r-plc',
+      'https://lh3.googleusercontent.com/a/default-user=s100',
+    )
+    await insertSnapshot(db, 'people/r-real', VALID_PHOTO_URL)
+
+    expect(await runtime.listGooglePhotoContactIds()).toEqual(['c-real'])
+    await db.close()
+  })
+
+  it('listGooglePhotoContactIds skips soft-deleted contacts', async () => {
+    const db = await freshDb('factory-test-list-google-photo-deleted')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    const now = '2026-01-01T00:00:00Z'
+    await db.execute(
+      `INSERT INTO contacts (
+         id, display_name, created_at, updated_at, deleted_at,
+         lamport_ts, device_id, google_resource_name
+       ) VALUES (?, ?, ?, ?, ?, 0, 'dev-1', ?)`,
+      ['c-deleted', 'Deleted', now, now, now, 'people/r-deleted'],
+    )
+    await insertSnapshot(db, 'people/r-deleted', VALID_PHOTO_URL)
+
+    expect(await runtime.listGooglePhotoContactIds()).toEqual([])
+    await db.close()
+  })
+
+  it('getAvatarBlob drops legacy rows without =s400 source_url (auto-upgrade)', async () => {
+    const db = await freshDb('factory-test-avatar-upgrade')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    // Legacy row at the default s100 size — older lazy-fetch build wrote
+    // the original photoUrl (no size override) here.
+    await db.execute(
+      `INSERT INTO avatars (contact_id, blob, mime, source_url, fetched_at, hash)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['c-legacy', PHOTO_BYTES, 'image/jpeg', VALID_PHOTO_URL, '2026-01-01T00:00:00Z', 'h-old'],
+    )
+
+    expect(await runtime.getAvatarBlob('c-legacy')).toBeNull()
+    const rows = await db.select<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM avatars WHERE contact_id = ?',
+      ['c-legacy'],
+    )
+    expect(rows[0]!.n).toBe(0)
+    await db.close()
+  })
+
+  it('getAvatarBlob drops bulk-sync rows with NULL source_url', async () => {
+    const db = await freshDb('factory-test-avatar-bulksync')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+    })
+
+    await db.execute(
+      `INSERT INTO avatars (contact_id, blob, mime, source_url, fetched_at, hash)
+       VALUES (?, ?, ?, NULL, ?, ?)`,
+      ['c-bulk', PHOTO_BYTES, 'image/jpeg', '2026-01-01T00:00:00Z', 'h-old'],
+    )
+
+    expect(await runtime.getAvatarBlob('c-bulk')).toBeNull()
+    await db.close()
+  })
+
+  it('getAvatarBlob returns stored bytes after successful fetch; null otherwise', async () => {
+    const db = await freshDb('factory-test-avatar-getblob')
+    const tokenStore = makeMemoryTokenStore()
+    const runtime = makeGoogleSyncRuntime({
+      db,
+      tokenStore,
+      oauthInvoke: noopInvoke,
+      oauthOpenUrl: noopOpenUrl,
+      fetchImpl: makeFetch(200, PHOTO_BYTES),
+    })
+
+    expect(await runtime.getAvatarBlob('c-7')).toBeNull()
+
+    await insertSnapshot(db, 'people/r7', VALID_PHOTO_URL)
+    await runtime.fetchAvatarOnDemand('c-7', 'people/r7')
+
+    const row = await runtime.getAvatarBlob('c-7')
+    expect(row).not.toBeNull()
+    expect(row!.mime).toBe('image/jpeg')
+    expect(row!.blob.length).toBeGreaterThan(0)
+    await db.close()
+  })
+})

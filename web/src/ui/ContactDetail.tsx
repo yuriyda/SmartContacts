@@ -12,6 +12,7 @@ import type {
   Contact,
   ContactTask,
   CustomFieldDef,
+  GoogleSyncRuntime,
   Interaction,
   LabelRepo,
   Ulid,
@@ -19,6 +20,8 @@ import type {
 import { computeDisplayName, fmtDate, timeAgo, ulid } from '@smart-contacts/shared'
 import { useApp } from './AppContext'
 import { ContactAvatar } from './ContactAvatar'
+import { useContactAvatar } from './useContactAvatar'
+import { AvatarLightbox } from './AvatarLightbox'
 import { TagPill, GroupBadge } from './badges'
 import { EmptyState } from './common'
 import {
@@ -77,6 +80,8 @@ export interface ContactDetailProps {
   confirm?: (opts: ConfirmOptions) => Promise<boolean>
   /** Optional LabelRepo for showing Google Labels section. Null when Google sync is unavailable. */
   labelRepo?: LabelRepo | null
+  /** Optional Google sync runtime — enables lazy on-demand avatar fetch. */
+  googleSync?: GoogleSyncRuntime | null
 }
 
 // ---------------------------------------------------------------------------
@@ -549,11 +554,16 @@ export function ContactDetail({
   onTaskSoftDelete,
   confirm,
   labelRepo = null,
+  googleSync = null,
 }: ContactDetailProps) {
   const { TC, t, locale } = useApp()
   const [composerOpen, setComposerOpen] = useState(false)
   const [taskComposerOpen, setTaskComposerOpen] = useState(false)
   const [showDoneTasks, setShowDoneTasks] = useState(false)
+
+  // Lazy on-demand Google avatar — null until cached or fetched successfully.
+  const photoDataUrl = useContactAvatar(googleSync, contact?.id, contact?.googleResourceName)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
 
   const openTasks = tasks.filter((tk) => !tk.doneAt)
   const doneTasks = tasks.filter((tk) => !!tk.doneAt)
@@ -610,7 +620,19 @@ export function ContactDetail({
       <div className={`px-4 py-4 border-b ${TC.borderClass}`}>
         {/* Avatar + name row */}
         <div className="flex items-start gap-3 mb-3">
-          <ContactAvatar id={contact.id} name={displayName} size={64} />
+          <ContactAvatar
+            id={contact.id}
+            name={displayName}
+            size={64}
+            photoDataUrl={photoDataUrl}
+            onPhotoClick={() => setLightboxOpen(true)}
+          />
+          <AvatarLightbox
+            open={lightboxOpen}
+            src={photoDataUrl}
+            alt={displayName}
+            onClose={() => setLightboxOpen(false)}
+          />
           <div className="flex-1 min-w-0">
             <h2
               className={`text-xl font-semibold leading-tight ${TC.text} flex items-center gap-1 flex-wrap`}

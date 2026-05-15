@@ -51,6 +51,11 @@ interface MainListProps {
   onSoftDelete: (id: string) => void
   onOpenEdit: (id: string) => void
   loading: boolean
+  /** Set of contact IDs that have a cached avatar — drives the "photo present" badge. */
+  avatarContactIds?: ReadonlySet<string>
+  /** Map of contact ID → blob/data URL for rendering cached avatar images
+   *  inside the row's avatar circle. */
+  avatarUrls?: ReadonlyMap<string, string>
 }
 
 interface DragState {
@@ -85,6 +90,8 @@ export const MainList = forwardRef<HTMLDivElement, MainListProps>(function MainL
     onSoftDelete,
     onOpenEdit,
     loading,
+    avatarContactIds,
+    avatarUrls,
   },
   ref,
 ) {
@@ -249,6 +256,8 @@ export const MainList = forwardRef<HTMLDivElement, MainListProps>(function MainL
           onTouch={() => onTouch(c.id)}
           onSoftDelete={() => onSoftDelete(c.id)}
           onOpenEdit={onOpenEdit}
+          hasAvatar={avatarContactIds?.has(c.id) ?? false}
+          photoDataUrl={avatarUrls?.get(c.id) ?? null}
         />
       ))}
       {overlay && (

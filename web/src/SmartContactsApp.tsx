@@ -42,6 +42,8 @@ import { useInteractions } from './store/useInteractions'
 import { useContactTasks } from './store/useContactTasks'
 import { Sidebar } from './ui/Sidebar'
 import { MainList } from './ui/MainList'
+import { useAvatarContactIds } from './ui/useAvatarContactIds'
+import { useAvatarBlobMap } from './ui/useAvatarBlobMap'
 import { ContactContextMenu } from './ui/ContactContextMenu'
 import { SortBar } from './ui/SortBar'
 import { FilterChipsBar } from './ui/FilterChipsBar'
@@ -136,6 +138,13 @@ function ScreenBody({
   const { contacts, loading, upsert, softDelete, restore, touch, refresh } = useContacts(
     dbState.contactsRepo,
   )
+
+  // Set of contact IDs Google says have a profile photo — drives the small
+  // "photo present" badge next to the Google logo in each ContactRow.
+  const avatarContactIds = useAvatarContactIds(googleSync)
+  // Locally cached avatar bytes — drives the in-row thumbnail (replaces the
+  // initials circle when a photo is available).
+  const avatarUrls = useAvatarBlobMap(googleSync)
 
   const [defs, setDefs] = useState<CustomFieldDef[]>([])
   const [defsVersion, setDefsVersion] = useState(0)
@@ -313,7 +322,19 @@ function ScreenBody({
   // Filtered list (filters only). The displayed list combines this with sort
   // below so all downstream consumers (MainList, moveCursor, clamp effect,
   // bulk handlers, marquee hit-test) see the rows in the user's chosen order.
-  const filteredOnly = useFilteredContacts(contacts, filters)
+  const filteredOnlyRaw = useFilteredContacts(contacts, filters)
+
+  // Refinement: "with Google photo" — runs after the scope/group/tag pipeline
+  // because the source of truth (snapshot.photoUrl) lives outside the pure
+  // Contact object. Kept here (not inside useFilteredContacts) so the shared
+  // contactFilter module remains DB- and runtime-agnostic.
+  const filteredOnly = useMemo(
+    () =>
+      filters.hasPhoto === true
+        ? filteredOnlyRaw.filter((c) => avatarContactIds.has(c.id))
+        : filteredOnlyRaw,
+    [filteredOnlyRaw, filters.hasPhoto, avatarContactIds],
+  )
 
   // Sort state — initialised from metaSettings.sort_v1; null means "no sort,
   // preserve the order applyContactFilters produced". Parsed defensively so a
@@ -1318,7 +1339,22 @@ function ScreenBody({
                 resetFilters={resetFilters}
                 contacts={contacts}
               />
-              <SortBar sort={sort} onToggle={onToggleSort} />
+              <SortBar
+                sort={sort}
+                onToggle={onToggleSort}
+                {...(googleSync !== null
+                  ? {
+                      withPhotoOnly: filters.hasPhoto === true,
+                      onToggleWithPhoto: () =>
+                        setFilters((p) =>
+                          p.hasPhoto === true
+                            ? // Drop the optional key to keep DEFAULT_FILTERS round-trip stable.
+                              (({ hasPhoto: _drop, ...rest }) => rest)(p)
+                            : { ...p, hasPhoto: true },
+                        ),
+                    }
+                  : {})}
+              />
               <div className="flex-1 flex min-h-0">
                 <MainList
                   ref={mainListRef}
@@ -1333,6 +1369,8 @@ function ScreenBody({
                   onSoftDelete={(id) => void handleSoftDelete(id)}
                   onOpenEdit={handleOpenEdit}
                   loading={loading}
+                  avatarContactIds={avatarContactIds}
+                  avatarUrls={avatarUrls}
                 />
                 <ResizeHandle
                   edge="right"
@@ -1364,6 +1402,7 @@ function ScreenBody({
                   onTaskSoftDelete={(id) => undoable.recordTaskSoftDelete(id)}
                   confirm={confirm}
                   labelRepo={googleSync?.repos.label ?? null}
+                  googleSync={googleSync}
                 />
               </div>
             </>
@@ -1399,6 +1438,7 @@ function ScreenBody({
         allContacts={contacts}
         onSave={(c) => void handleSaveContact(c)}
         onCancel={() => setEditing({ open: false, contact: null })}
+        googleSync={googleSync}
       />
 
       <SettingsDialog

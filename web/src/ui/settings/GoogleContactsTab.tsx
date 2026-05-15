@@ -49,7 +49,7 @@ export interface GoogleContactsTabProps {
   /** Notify parent to reload contacts (after Disconnect-Delete or successful Sync). */
   refreshContacts: () => void
   /** Toast hook for surface-level notifications. */
-  onToast?: (message: string) => void
+  onToast?: (message: string, opts?: { persistent?: boolean }) => void
 }
 
 type DisconnectStep = 'idle' | 'choose_action' | 'confirm_delete'
@@ -185,7 +185,9 @@ export function GoogleContactsTab({
       } else if (msg.startsWith('NO_CLIENT_SECRET')) {
         onToast?.(t('googleContacts.setClientSecretFirst') || 'Set Client Secret first')
       } else {
-        onToast?.((t('googleContacts.connectFailed') || 'Connect failed') + ': ' + msg)
+        onToast?.((t('googleContacts.connectFailed') || 'Connect failed') + ': ' + msg, {
+          persistent: true,
+        })
       }
     } finally {
       setConnecting(false)
@@ -223,7 +225,12 @@ export function GoogleContactsTab({
       } else if (result.kind === 'up_to_date') {
         onToast?.(t('googleContacts.upToDate') || 'Already up to date')
       } else if (result.kind === 'failed') {
-        onToast?.((t('googleContacts.syncFailed') || 'Sync failed') + ': ' + result.error.message)
+        // Persistent — user must read the error message before dismissing.
+        onToast?.((t('googleContacts.syncFailed') || 'Sync failed') + ': ' + result.error.message, {
+          persistent: true,
+        })
+        // eslint-disable-next-line no-console
+        console.error('[GoogleContacts] Sync failed:', result.error)
       }
     } finally {
       setSyncNowLoading(false)
@@ -237,6 +244,31 @@ export function GoogleContactsTab({
 
   const handleDisconnectClick = useCallback(() => setDisconnectStep('choose_action'), [])
   const handleCancelDisconnect = useCallback(() => setDisconnectStep('idle'), [])
+
+  const [cleanupBusy, setCleanupBusy] = useState(false)
+  const handleRemoveOrphanDuplicates = useCallback(async () => {
+    if (!runtime) return
+    setCleanupBusy(true)
+    try {
+      const count = await runtime.removeOrphanDuplicates()
+      refreshContacts()
+      window.dispatchEvent(new Event('google-contacts-sync-changed'))
+      onToast?.(
+        count === 0
+          ? t('googleContacts.noDuplicates') || 'No orphan duplicates found'
+          : (t('googleContacts.duplicatesRemoved') || 'Removed') + ` ${count}`,
+      )
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      // eslint-disable-next-line no-console
+      console.error('[GoogleContacts] removeOrphanDuplicates failed:', e)
+      onToast?.((t('googleContacts.duplicatesRemoveFailed') || 'Cleanup failed') + ': ' + msg, {
+        persistent: true,
+      })
+    } finally {
+      setCleanupBusy(false)
+    }
+  }, [runtime, onToast, t, refreshContacts])
 
   const handleKeepAndDisconnect = useCallback(async () => {
     if (!runtime) return
@@ -486,6 +518,21 @@ export function GoogleContactsTab({
 
             <button
               type="button"
+              disabled={cleanupBusy}
+              onClick={() => void handleRemoveOrphanDuplicates()}
+              title={
+                t('googleContacts.removeDuplicatesHint') ||
+                'Removes locally-detached duplicates produced by a previous Disconnect-with-keep + Reconnect cycle.'
+              }
+              className={`px-3 py-1.5 rounded text-sm border ${TC.borderClass} ${TC.textSec} hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {cleanupBusy
+                ? t('googleContacts.removingDuplicates') || 'Cleaning…'
+                : t('googleContacts.removeDuplicates') || 'Remove duplicates'}
+            </button>
+
+            <button
+              type="button"
               disabled={disconnecting}
               onClick={handleDisconnectClick}
               className="px-3 py-1.5 rounded text-sm border border-red-500/40 text-red-400 hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -534,7 +581,7 @@ export function GoogleContactsTab({
               onClick={handleCancelDisconnect}
               className={`w-full text-left px-3 py-2 rounded text-sm border ${TC.borderClass} ${TC.textMuted} hover:opacity-80`}
             >
-              {t('common.cancel') || 'Cancel'}
+              {t('actions.cancel')}
             </button>
           </div>
           <p className={`text-xs ${TC.textMuted}`}>
@@ -557,7 +604,7 @@ export function GoogleContactsTab({
               onClick={handleCancelDisconnect}
               className={`px-3 py-1.5 rounded text-sm border ${TC.borderClass} ${TC.textMuted} hover:opacity-80`}
             >
-              {t('common.cancel') || 'Cancel'}
+              {t('actions.cancel')}
             </button>
             <button
               type="button"

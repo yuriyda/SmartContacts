@@ -153,6 +153,52 @@ Then build and run on an emulator or connected device from Android Studio's Run 
 - Sync (Google Drive) is not wired on mobile in v1 — "Sync now" button is a placeholder.
 - iOS not supported in v1.
 
+## Google Contacts integration
+
+Read-only sync from Google's People API into the local SQLite. **The app has no write capability to Google** — `contacts.readonly` OAuth scope, HTTP method allowlist, URL allowlist, write surface tested in `pull-engine.no-write.test.ts`.
+
+### Setup
+
+1. Cloud Console → enable People API; create an OAuth client of type **Desktop app** (PKCE).
+2. Settings → Google Contacts → paste Client ID + Client Secret, save.
+3. **Connect** → system browser opens Google's consent screen → grant `contacts.readonly` → loopback port returns the auth code.
+4. **Sync now** → first run pulls every contact in a full fetch; subsequent runs are incremental via `syncToken`.
+
+Every sync presents a Dry-Run modal listing inserts / updates / deletes / conflicts before anything is written. Field-level conflicts queue separately for manual resolution; the bulk apply never touches them.
+
+### Avatars
+
+Avatar bytes are **not** downloaded during bulk sync — Google's CDN tarpits any IP that fetches many photos in quick succession, and there is no authenticated bytes endpoint in People API. Instead the app caches photos lazily:
+
+- Each contact's `photoUrl` is preserved in its snapshot.
+- The first time a contact is opened in the right panel, a one-shot fetch at `=s400` resolution downloads the bytes, caches them in the `avatars` table (BLOB), and renders them.
+- The contact list shows the cached photo in place of initials as soon as the bytes are saved (no extra refresh needed).
+- Click an avatar in the detail panel or edit dialog to open a fullscreen lightbox.
+
+Defenses against rate limiting:
+
+- 300 ms React-side debounce so quick-clicking through contacts doesn't fire a fetch per row.
+- Runtime-level in-flight dedup keyed by `contactId`.
+- 60 s global circuit breaker after any HTTP 429 — no other lazy fetch fires until it expires.
+- `maxRetries=0` on the lazy path — one shot, no backoff spam against a tarpitted CDN.
+
+### List markers and filter
+
+- 4-colour Google "G" next to a name marks the contact as imported from Google.
+- A small image icon next to the G means **Google has a profile photo for this contact** (independent of whether the bytes have been cached locally yet).
+- The Sort bar carries a **"With photo" toggle**; when on, the list is restricted to contacts that have a profile photo. The same chip appears in the FilterChipsBar with an "×" to clear it.
+
+### Maintenance actions (Settings → Google Contacts)
+
+- **Sync now** — incremental sync via `syncToken`; falls back to full fetch if the token expired or was cleared.
+- **Open in Google** — opens contacts.google.com in the system browser.
+- **Remove duplicates** — one-shot cleanup for the duplicate fallout of a "Disconnect (keep) → Reconnect → Sync" cycle. Deletes any local contact whose `google_resource_name` is NULL and whose `display_name` matches a Google-linked twin.
+- **Disconnect** — two-step prompt: keep imports as local-only contacts (clears `google_resource_name`) **or** delete every Google-imported row.
+
+### Tauri SQL workaround
+
+`@tauri-apps/plugin-sql` v2.4 has no real BLOB binding for `JsonValue::Array` — Uint8Array round-tripped through Tauri's JSON IPC ends up serialised as text and stored under SQLite's type-affinity rules in the `BLOB` column (plugins-workspace#105, still open). `tauri-sql-backend.ts` rewrites every `Uint8Array` parameter into an inline hex literal `x'FFD8FF...'` before delegating to plugin-sql; SQLite then parses it as a real BLOB. See the file header for the full rationale.
+
 ## Architecture notes
 
 - DB persistence is abstracted behind `DbAdapter` (`shared/src/db/adapter.ts`). Each target supplies its own implementation — `wa-sqlite-backend.ts` (web), `tauri-sql-backend.ts` (tauri), `capacitor-sql-backend.ts` (pwa).
